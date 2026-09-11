@@ -24,12 +24,29 @@ wheels = [
 name = "northstar-application"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "northstar-core" },
+]
 
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+
+[package.metadata]
+requires-dist = [{ name = "northstar-core", editable = "../northstar-core" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "ruff", specifier = ">=0.16.1" },
+]
+
+[[package]]
+name = "northstar-core"
+version = "0.1.0"
+source = { editable = "../northstar-core" }
 
 [package.metadata]
 
