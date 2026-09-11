@@ -8,9 +8,13 @@ from northstar_core.domain.instrument import Instrument
 from northstar_core.domain.listing import Listing
 from northstar_core.domain.value_objects import ListingStatus, Tradability
 from northstar_core.foundation.value_objects import Currency, ExchangeCode, PointInTime, Symbol
-from northstar_core.strategy import AssetAnalysis, Strategy, StrategyIdentity
+from northstar_core.strategy import AssetAnalysis, Recommendation, Strategy, StrategyIdentity
 
-from northstar_application.application_services import AnalyzeAssetUseCase, AssetAnalysisInput
+from northstar_application.application_services import (
+    AnalyzeAssetResult,
+    AnalyzeAssetUseCase,
+    AssetAnalysisInput,
+)
 
 
 def _build_listing(symbol: str = "AAPL") -> Listing:
@@ -22,6 +26,15 @@ def _build_listing(symbol: str = "AAPL") -> Listing:
         tradability=Tradability("Permitted"),
         description="Apple Inc.",
     )
+
+
+def _build_recommendation() -> Recommendation:
+    asset_analysis = AssetAnalysis(
+        listing=_build_listing(),
+        point_in_time=PointInTime("2026-09-06T09:30:00Z"),
+        summarized_signals=("strong bullish",),
+    )
+    return Strategy(StrategyIdentity("test-strategy")).evaluate(asset_analysis)
 
 
 class StubProvider:
@@ -65,8 +78,11 @@ def test_execute_returns_strategy_recommendation() -> None:
         )
     )
 
-    assert result == expected
-    assert str(result) == "BUY AAPL by mvp at 2026-09-06T09:30:00Z"
+    assert isinstance(result, AnalyzeAssetResult)
+    assert result.recommendation == expected
+    assert str(result.recommendation) == "BUY AAPL by mvp at 2026-09-06T09:30:00Z"
+    assert result.explanation.recommendation is result.recommendation
+    assert result.explanation.reasons[0].supporting_signals == ("strong bullish",)
 
 
 def test_execute_builds_asset_analysis_from_provider_input_and_delegates_strategy() -> None:
@@ -81,13 +97,13 @@ def test_execute_builds_asset_analysis_from_provider_input_and_delegates_strateg
         point_in_time=analysis_input.point_in_time,
         summarized_signals=analysis_input.summarized_signals,
     )
-    strategy = RecordingStrategy(recommendation=object())
+    strategy = RecordingStrategy(recommendation=_build_recommendation())
     provider = StubProvider(input_data=analysis_input)
     use_case = AnalyzeAssetUseCase(strategy, provider)
 
     result = use_case.execute(symbol)
 
-    assert result is strategy._recommendation
+    assert result.recommendation is strategy._recommendation
     assert provider.calls == [symbol]
     assert strategy.calls == [expected]
 
@@ -101,7 +117,7 @@ def test_execute_calls_provider_once_per_invocation() -> None:
             summarized_signals=("strong bullish",),
         )
     )
-    strategy = RecordingStrategy(recommendation=object())
+    strategy = RecordingStrategy(recommendation=_build_recommendation())
     use_case = AnalyzeAssetUseCase(strategy, provider)
 
     use_case.execute(symbol)
@@ -179,11 +195,12 @@ def test_execute_is_deterministic_for_same_inputs() -> None:
         point_in_time=PointInTime("2026-09-06T09:30:00Z"),
         summarized_signals=("strong bullish",),
     )
-    strategy = RecordingStrategy(recommendation=object())
+    strategy = RecordingStrategy(recommendation=_build_recommendation())
     use_case = AnalyzeAssetUseCase(strategy, StubProvider(input_data=analysis_input))
 
     first = use_case.execute(symbol)
     second = use_case.execute(symbol)
 
-    assert first is second
+    assert first.recommendation is second.recommendation
+    assert first.explanation == second.explanation
     assert strategy.calls[0] == strategy.calls[1]

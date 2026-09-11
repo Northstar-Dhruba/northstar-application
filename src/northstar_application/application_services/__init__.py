@@ -1,6 +1,7 @@
 """Application Services subpackage."""
 
 from northstar_application.application_services.analyze_asset import (
+    AnalyzeAssetResult,
     AnalyzeAssetUseCase,
     AssetAnalysisInput,
     MarketObservationProvider,
@@ -8,6 +9,7 @@ from northstar_application.application_services.analyze_asset import (
 
 __all__ = [
     "AnalyzeAssetUseCase",
+    "AnalyzeAssetResult",
     "AssetAnalysisInput",
     "MarketObservationProvider",
 ]

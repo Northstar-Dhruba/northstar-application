@@ -7,7 +7,13 @@ from typing import Protocol
 
 from northstar_core.domain.listing import Listing
 from northstar_core.foundation.value_objects import PointInTime, Symbol
-from northstar_core.strategy import AssetAnalysis, Recommendation, Strategy
+from northstar_core.strategy import (
+    AssetAnalysis,
+    ExplanationReason,
+    Recommendation,
+    RecommendationExplanation,
+    Strategy,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +23,14 @@ class AssetAnalysisInput:
     listing: Listing
     point_in_time: PointInTime
     summarized_signals: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyzeAssetResult:
+    """Complete application outcome for analyzing one asset."""
+
+    recommendation: Recommendation
+    explanation: RecommendationExplanation
 
 
 class MarketObservationProvider(Protocol):
@@ -44,8 +58,8 @@ class AnalyzeAssetUseCase:
         self._strategy = strategy
         self._observation_provider = observation_provider
 
-    def execute(self, symbol: Symbol) -> Recommendation:
-        """Analyze one symbol and return the Strategy-produced recommendation."""
+    def execute(self, symbol: Symbol) -> AnalyzeAssetResult:
+        """Analyze one symbol and return its recommendation with an explanation."""
         if symbol is None:
             raise TypeError("AnalyzeAssetUseCase symbol cannot be None.")
         if not isinstance(symbol, Symbol):
@@ -57,4 +71,14 @@ class AnalyzeAssetUseCase:
             point_in_time=analysis_input.point_in_time,
             summarized_signals=analysis_input.summarized_signals,
         )
-        return self._strategy.evaluate(asset_analysis)
+        recommendation = self._strategy.evaluate(asset_analysis)
+        explanation = RecommendationExplanation(
+            recommendation=recommendation,
+            reasons=(
+                ExplanationReason(
+                    rationale="Recommendation is supported by the analyzed market signals.",
+                    supporting_signals=asset_analysis.summarized_signals,
+                ),
+            ),
+        )
+        return AnalyzeAssetResult(recommendation=recommendation, explanation=explanation)
