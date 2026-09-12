@@ -3,6 +3,7 @@
 from northstar_application.ports.broker_port import BrokerPort
 from northstar_application.ports.event_publisher_port import EventPublisherPort
 from northstar_application.ports.exchange_port import ExchangePort
+from northstar_application.ports.market_observation_source import MarketObservationSource
 from northstar_application.ports.order_persistence_port import OrderPersistencePort
 from northstar_application.ports.portfolio_update_port import PortfolioUpdatePort
 from northstar_application.ports.trade_recording_port import TradeRecordingPort
@@ -12,6 +13,7 @@ __all__ = [
     "BrokerPort",
     "EventPublisherPort",
     "ExchangePort",
+    "MarketObservationSource",
     "OrderPersistencePort",
     "PortfolioUpdatePort",
     "TradeRecordingPort",

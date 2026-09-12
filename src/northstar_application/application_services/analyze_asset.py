@@ -3,26 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
 
-from northstar_core.domain.listing import Listing
-from northstar_core.foundation.value_objects import PointInTime, Symbol
+from northstar_core.foundation.value_objects import Symbol
 from northstar_core.strategy import (
-    AssetAnalysis,
+    AssetAnalysisGenerator,
     ExplanationReason,
     Recommendation,
     RecommendationExplanation,
     Strategy,
 )
 
-
-@dataclass(frozen=True, slots=True)
-class AssetAnalysisInput:
-    """Market context needed to construct an AssetAnalysis for one asset."""
-
-    listing: Listing
-    point_in_time: PointInTime
-    summarized_signals: tuple[str, ...]
+from northstar_application.ports import MarketObservationSource
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,30 +24,35 @@ class AnalyzeAssetResult:
     explanation: RecommendationExplanation
 
 
-class MarketObservationProvider(Protocol):
-    """Provides single-asset market context to the Analyze Asset use case."""
-
-    def get_analysis_input(self, symbol: Symbol) -> AssetAnalysisInput:
-        """Return the current market context required to analyze one symbol."""
-
-
 class AnalyzeAssetUseCase:
     """Coordinates one asset analysis without defining recommendation policy."""
 
-    def __init__(self, strategy: Strategy, observation_provider: MarketObservationProvider) -> None:
+    def __init__(
+        self,
+        strategy: Strategy,
+        observation_source: MarketObservationSource,
+        analysis_generator: AssetAnalysisGenerator,
+    ) -> None:
         if strategy is None:
             raise TypeError("AnalyzeAssetUseCase strategy cannot be None.")
         if not isinstance(strategy, Strategy):
             raise TypeError("AnalyzeAssetUseCase strategy must be a Strategy instance.")
-        if observation_provider is None:
-            raise TypeError("AnalyzeAssetUseCase observation_provider cannot be None.")
-        if not hasattr(observation_provider, "get_analysis_input"):
+        if observation_source is None:
+            raise TypeError("AnalyzeAssetUseCase observation_source cannot be None.")
+        if not isinstance(observation_source, MarketObservationSource):
             raise TypeError(
-                "AnalyzeAssetUseCase observation_provider must provide get_analysis_input(symbol)."
+                "AnalyzeAssetUseCase observation_source must be a MarketObservationSource."
+            )
+        if analysis_generator is None:
+            raise TypeError("AnalyzeAssetUseCase analysis_generator cannot be None.")
+        if not isinstance(analysis_generator, AssetAnalysisGenerator):
+            raise TypeError(
+                "AnalyzeAssetUseCase analysis_generator must be an AssetAnalysisGenerator."
             )
 
         self._strategy = strategy
-        self._observation_provider = observation_provider
+        self._observation_source = observation_source
+        self._analysis_generator = analysis_generator
 
     def execute(self, symbol: Symbol) -> AnalyzeAssetResult:
         """Analyze one symbol and return its recommendation with an explanation."""
@@ -65,12 +61,8 @@ class AnalyzeAssetUseCase:
         if not isinstance(symbol, Symbol):
             raise TypeError("AnalyzeAssetUseCase symbol must be a Symbol value.")
 
-        analysis_input = self._observation_provider.get_analysis_input(symbol)
-        asset_analysis = AssetAnalysis(
-            listing=analysis_input.listing,
-            point_in_time=analysis_input.point_in_time,
-            summarized_signals=analysis_input.summarized_signals,
-        )
+        observation_context = self._observation_source.get_observation_context(symbol)
+        asset_analysis = self._analysis_generator.generate(observation_context)
         recommendation = self._strategy.evaluate(asset_analysis)
         explanation = RecommendationExplanation(
             recommendation=recommendation,
