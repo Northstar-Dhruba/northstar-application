@@ -114,6 +114,7 @@ def test_execute_returns_strategy_recommendation() -> None:
     assert str(result.recommendation) == "BUY AAPL by mvp at 2026-09-06T09:30:00Z"
     assert result.explanation.recommendation is result.recommendation
     assert result.explanation.reasons[0].supporting_signals == ("strong bullish",)
+    assert result.market_observation_context is context
 
 
 def test_execute_requests_context_generates_analysis_and_delegates_strategy() -> None:
@@ -132,6 +133,7 @@ def test_execute_requests_context_generates_analysis_and_delegates_strategy() ->
     result = use_case.execute(symbol)
 
     assert result.recommendation is strategy._recommendation
+    assert result.market_observation_context is context
     assert source.calls == [symbol]
     assert generator.calls == [context]
     assert strategy.calls == [expected]
@@ -226,4 +228,6 @@ def test_execute_is_deterministic_for_same_inputs() -> None:
 
     assert first.recommendation is second.recommendation
     assert first.explanation == second.explanation
+    assert first.market_observation_context is context
+    assert second.market_observation_context is context
     assert strategy.calls[0] == strategy.calls[1]

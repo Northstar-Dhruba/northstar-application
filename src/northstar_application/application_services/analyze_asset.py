@@ -8,6 +8,7 @@ from northstar_core.foundation.value_objects import Symbol
 from northstar_core.strategy import (
     AssetAnalysisGenerator,
     ExplanationReason,
+    MarketObservationContext,
     Recommendation,
     RecommendationExplanation,
     Strategy,
@@ -22,6 +23,7 @@ class AnalyzeAssetResult:
 
     recommendation: Recommendation
     explanation: RecommendationExplanation
+    market_observation_context: MarketObservationContext
 
 
 class AnalyzeAssetUseCase:
@@ -73,4 +75,8 @@ class AnalyzeAssetUseCase:
                 ),
             ),
         )
-        return AnalyzeAssetResult(recommendation=recommendation, explanation=explanation)
+        return AnalyzeAssetResult(
+            recommendation=recommendation,
+            explanation=explanation,
+            market_observation_context=observation_context,
+        )
