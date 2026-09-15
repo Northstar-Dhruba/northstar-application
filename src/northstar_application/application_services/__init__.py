@@ -11,13 +11,21 @@ from northstar_application.application_services.analyze_watchlist import (
     AnalyzeWatchlistResult,
     AnalyzeWatchlistUseCase,
 )
+from northstar_application.application_services.ingest_historical_market_data import (
+    HistoricalDataContractViolationError,
+    HistoricalMarketDataIngestionResult,
+    IngestHistoricalMarketDataUseCase,
+)
 
 __all__ = [
-    "AnalyzeAssetUseCase",
     "AnalyzeAssetResult",
-    "AnalyzeWatchlistItemResult",
+    "AnalyzeAssetUseCase",
     "AnalyzeWatchlistFailure",
     "AnalyzeWatchlistFailureCode",
+    "AnalyzeWatchlistItemResult",
     "AnalyzeWatchlistResult",
     "AnalyzeWatchlistUseCase",
+    "HistoricalDataContractViolationError",
+    "HistoricalMarketDataIngestionResult",
+    "IngestHistoricalMarketDataUseCase",
 ]
