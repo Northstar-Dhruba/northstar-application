@@ -8,6 +8,8 @@ from northstar_application.ports.historical_market_data_repository import (
     HistoricalMarketDataRepository,
     InvalidHistoricalMarketDataQueryError,
 )
+from northstar_application.ports.historical_market_data_source import HistoricalMarketDataSource
+from northstar_application.ports.historical_market_data_store import HistoricalMarketDataStore
 from northstar_application.ports.market_observation_source import MarketObservationSource
 from northstar_application.ports.order_persistence_port import OrderPersistencePort
 from northstar_application.ports.portfolio_update_port import PortfolioUpdatePort
@@ -20,6 +22,8 @@ __all__ = [
     "ExchangePort",
     "HistoricalMarketDataQuery",
     "HistoricalMarketDataRepository",
+    "HistoricalMarketDataSource",
+    "HistoricalMarketDataStore",
     "InvalidHistoricalMarketDataQueryError",
     "MarketObservationSource",
     "OrderPersistencePort",
