@@ -14,6 +14,10 @@ from northstar_application.ports.market_observation_source import MarketObservat
 from northstar_application.ports.order_persistence_port import OrderPersistencePort
 from northstar_application.ports.portfolio_update_port import PortfolioUpdatePort
 from northstar_application.ports.trade_recording_port import TradeRecordingPort
+from northstar_application.ports.trading_session_resolver import (
+    TradingSessionResolutionError,
+    TradingSessionResolver,
+)
 from northstar_application.ports.transaction_port import TransactionPort
 
 __all__ = [
@@ -29,5 +33,7 @@ __all__ = [
     "OrderPersistencePort",
     "PortfolioUpdatePort",
     "TradeRecordingPort",
+    "TradingSessionResolutionError",
+    "TradingSessionResolver",
     "TransactionPort",
 ]
