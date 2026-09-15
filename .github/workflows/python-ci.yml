@@ -33,6 +33,14 @@ jobs:
       - name: Set up Python
         run: uv python install 3.13
 
+      - name: Verify workspace dependency layout
+        run: |
+          pwd
+          ls -la ..
+          test -f ../northstar-core/pyproject.toml
+          echo "northstar-core workspace dependency found"
+        working-directory: northstar-application
+
       - name: Sync dependencies
         run: uv sync
         working-directory: northstar-application
