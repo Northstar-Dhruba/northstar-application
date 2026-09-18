@@ -1,8 +1,9 @@
 """Application Services subpackage."""
 
-from northstar_application.application_services.analyze_asset import (
-    AnalyzeAssetResult,
-    AnalyzeAssetUseCase,
+from northstar_application.application_services.analyze_asset import AnalyzeAssetUseCase
+from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
+from northstar_application.application_services.analyze_market_observation_context import (
+    AnalyzeMarketObservationContextService,
 )
 from northstar_application.application_services.analyze_watchlist import (
     AnalyzeWatchlistFailure,
@@ -14,6 +15,9 @@ from northstar_application.application_services.analyze_watchlist import (
 from northstar_application.application_services.evaluate_historical_research import (
     EvaluateHistoricalResearchUseCase,
     HistoricalResearchEvaluation,
+)
+from northstar_application.application_services.historical_snapshot_evaluator import (
+    HistoricalSnapshotEvaluatorService,
 )
 from northstar_application.application_services.ingest_historical_market_data import (
     HistoricalDataContractViolationError,
@@ -38,4 +42,6 @@ __all__ = [
     "ReplayHistoricalMarketDataUseCase",
     "EvaluateHistoricalResearchUseCase",
     "HistoricalResearchEvaluation",
+    "AnalyzeMarketObservationContextService",
+    "HistoricalSnapshotEvaluatorService",
 ]
