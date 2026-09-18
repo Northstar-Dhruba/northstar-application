@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from northstar_core.foundation.value_objects import PointInTime
 from northstar_core.market_data import HistoricalReplaySnapshot
 
-from northstar_application.application_services.analyze_asset import AnalyzeAssetResult
+from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
 from northstar_application.ports import HistoricalSnapshotEvaluator
 
 

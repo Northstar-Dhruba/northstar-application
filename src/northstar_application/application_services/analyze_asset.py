@@ -2,28 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from northstar_core.foundation.value_objects import Symbol
 from northstar_core.strategy import (
     AssetAnalysisGenerator,
-    ExplanationReason,
-    MarketObservationContext,
-    Recommendation,
-    RecommendationExplanation,
     Strategy,
 )
 
+from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
+from northstar_application.application_services.analyze_market_observation_context import (
+    AnalyzeMarketObservationContextService,
+)
 from northstar_application.ports import MarketObservationSource
-
-
-@dataclass(frozen=True, slots=True)
-class AnalyzeAssetResult:
-    """Complete application outcome for analyzing one asset."""
-
-    recommendation: Recommendation
-    explanation: RecommendationExplanation
-    market_observation_context: MarketObservationContext
 
 
 class AnalyzeAssetUseCase:
@@ -52,9 +41,11 @@ class AnalyzeAssetUseCase:
                 "AnalyzeAssetUseCase analysis_generator must be an AssetAnalysisGenerator."
             )
 
-        self._strategy = strategy
         self._observation_source = observation_source
-        self._analysis_generator = analysis_generator
+        self._context_analyzer = AnalyzeMarketObservationContextService(
+            strategy=strategy,
+            analysis_generator=analysis_generator,
+        )
 
     def execute(self, symbol: Symbol) -> AnalyzeAssetResult:
         """Analyze one symbol and return its recommendation with an explanation."""
@@ -64,19 +55,4 @@ class AnalyzeAssetUseCase:
             raise TypeError("AnalyzeAssetUseCase symbol must be a Symbol value.")
 
         observation_context = self._observation_source.get_observation_context(symbol)
-        asset_analysis = self._analysis_generator.generate(observation_context)
-        recommendation = self._strategy.evaluate(asset_analysis)
-        explanation = RecommendationExplanation(
-            recommendation=recommendation,
-            reasons=(
-                ExplanationReason(
-                    rationale="Recommendation is supported by the analyzed market signals.",
-                    supporting_signals=asset_analysis.summarized_signals,
-                ),
-            ),
-        )
-        return AnalyzeAssetResult(
-            recommendation=recommendation,
-            explanation=explanation,
-            market_observation_context=observation_context,
-        )
+        return self._context_analyzer.execute(observation_context)

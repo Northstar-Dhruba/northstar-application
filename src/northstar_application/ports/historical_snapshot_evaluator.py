@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from northstar_core.market_data import HistoricalReplaySnapshot
 
 if TYPE_CHECKING:
-    from northstar_application.application_services.analyze_asset import AnalyzeAssetResult
+    from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
 
 
 class HistoricalSnapshotEvaluator(ABC):
