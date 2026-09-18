@@ -16,6 +16,9 @@ from northstar_application.application_services.ingest_historical_market_data im
     HistoricalMarketDataIngestionResult,
     IngestHistoricalMarketDataUseCase,
 )
+from northstar_application.application_services.replay_historical_market_data import (
+    ReplayHistoricalMarketDataUseCase,
+)
 
 __all__ = [
     "AnalyzeAssetResult",
@@ -28,4 +31,5 @@ __all__ = [
     "HistoricalDataContractViolationError",
     "HistoricalMarketDataIngestionResult",
     "IngestHistoricalMarketDataUseCase",
+    "ReplayHistoricalMarketDataUseCase",
 ]
