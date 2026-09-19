@@ -1,9 +1,6 @@
 """Deterministic end-to-end Application workflow coverage."""
 
-from northstar_core.domain.exchange import Exchange
-from northstar_core.domain.instrument import Instrument
-from northstar_core.domain.listing import Listing
-from northstar_core.domain.value_objects import ListingStatus, Tradability
+from northstar_core.domain.value_objects import ListingReference
 from northstar_core.foundation.value_objects import (
     Currency,
     ExchangeCode,
@@ -28,25 +25,19 @@ class DeterministicObservationSource(MarketObservationSource):
         self.context = context
 
     def get_observation_context(self, symbol: Symbol) -> MarketObservationContext:
-        assert symbol == self.context.listing.instrument.symbol
+        assert symbol == self.context.listing_reference.symbol
         return self.context
 
 
 def _build_context() -> MarketObservationContext:
     currency = Currency("USD")
-    listing = Listing(
-        Instrument(Symbol("AAPL"), "Apple Inc.", "Equity"),
-        Exchange(ExchangeCode("NASDAQ"), "NASDAQ"),
-        currency,
-        ListingStatus("Active"),
-        Tradability("Permitted"),
-    )
+    listing_reference = ListingReference(Symbol("AAPL"), ExchangeCode("NASDAQ"))
     closes = tuple(Price("100", currency) for _ in range(15)) + tuple(
         Price("130", currency) for _ in range(5)
     )
     volumes = tuple(Quantity("100") for _ in range(20))
     return MarketObservationContext(
-        listing=listing,
+        listing_reference=listing_reference,
         observed_at=PointInTime("2026-09-15T10:00:00Z"),
         latest_price=Price("130", currency),
         previous_close=Price("120", currency),
@@ -70,6 +61,6 @@ def test_analyze_asset_application_workflow_preserves_complete_result() -> None:
 
     assert result.market_observation_context is context
     assert result.recommendation.action.value == "BUY"
-    assert result.recommendation.asset_analysis.listing is context.listing
+    assert result.recommendation.asset_analysis.listing_reference is context.listing_reference
     assert result.explanation.recommendation is result.recommendation
     assert result.explanation.reasons[0].supporting_signals == ("strong bullish",)

@@ -5,10 +5,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 
 import pytest
-from northstar_core.domain.exchange import Exchange
-from northstar_core.domain.instrument import Instrument
-from northstar_core.domain.listing import Listing
-from northstar_core.domain.value_objects import ListingStatus, Tradability
+from northstar_core.domain.value_objects import ListingReference
 from northstar_core.foundation.value_objects import (
     Currency,
     ExchangeCode,
@@ -38,16 +35,9 @@ from northstar_application.ports import HistoricalSnapshotEvaluator
 
 def _context() -> MarketObservationContext:
     currency = Currency("USD")
-    listing = Listing(
-        instrument=Instrument(Symbol("AAPL"), "Apple Inc.", "Equity"),
-        exchange=Exchange(ExchangeCode("NASDAQ"), "NASDAQ"),
-        currency=currency,
-        listing_status=ListingStatus("Active"),
-        tradability=Tradability("Permitted"),
-        description="Apple Inc.",
-    )
+    listing_reference = ListingReference(Symbol("AAPL"), ExchangeCode("NASDAQ"))
     return MarketObservationContext(
-        listing=listing,
+        listing_reference=listing_reference,
         observed_at=PointInTime("2026-01-01T10:00:00Z"),
         latest_price=Price("130", currency),
         previous_close=Price("120", currency),

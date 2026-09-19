@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from northstar_core.domain.exchange import Exchange
-from northstar_core.domain.instrument import Instrument
-from northstar_core.domain.listing import Listing
-from northstar_core.domain.value_objects import ListingStatus, Tradability
+from northstar_core.domain.value_objects import ListingReference
 from northstar_core.foundation.value_objects import (
     Currency,
     ExchangeCode,
@@ -31,21 +28,14 @@ from northstar_application.application_services import (
 from northstar_application.ports import MarketObservationSource
 
 
-def _build_listing(symbol: str = "AAPL") -> Listing:
-    return Listing(
-        instrument=Instrument(Symbol(symbol), "Apple Inc.", "Equity"),
-        exchange=Exchange(ExchangeCode("NASDAQ"), "NASDAQ"),
-        currency=Currency("USD"),
-        listing_status=ListingStatus("Active"),
-        tradability=Tradability("Permitted"),
-        description="Apple Inc.",
-    )
+def _build_listing_reference(symbol: str = "AAPL") -> ListingReference:
+    return ListingReference(Symbol(symbol), ExchangeCode("NASDAQ"))
 
 
 def _build_context(symbol: str = "AAPL") -> MarketObservationContext:
     currency = Currency("USD")
     return MarketObservationContext(
-        listing=_build_listing(symbol),
+        listing_reference=_build_listing_reference(symbol),
         observed_at=PointInTime("2026-09-06T09:30:00Z"),
         latest_price=Price("130", currency),
         previous_close=Price("120", currency),
@@ -121,7 +111,7 @@ def test_execute_requests_context_generates_analysis_and_delegates_strategy() ->
     symbol = Symbol("AAPL")
     context = _build_context("AAPL")
     expected = AssetAnalysis(
-        listing=context.listing,
+        listing_reference=context.listing_reference,
         point_in_time=context.observed_at,
         summarized_signals=("strong bullish",),
     )
