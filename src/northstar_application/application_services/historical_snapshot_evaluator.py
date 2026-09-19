@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from northstar_core.domain.listing import Listing
+from northstar_core.domain.value_objects import ListingReference
 from northstar_core.foundation.value_objects import Timeframe
 from northstar_core.market_data import HistoricalReplaySnapshot
 from northstar_core.strategy import AssetAnalysisGenerator, MarketObservationContext, Strategy
@@ -11,26 +11,25 @@ from northstar_application.application_services.analyze_asset import AnalyzeAsse
 from northstar_application.application_services.analyze_market_observation_context import (
     AnalyzeMarketObservationContextService,
 )
-from northstar_application.ports import HistoricalSnapshotEvaluator, ListingResolver
+from northstar_application.ports import HistoricalSnapshotEvaluator
 
 
 class HistoricalSnapshotEvaluatorService(HistoricalSnapshotEvaluator):
-    """Evaluate daily historical snapshots without live market-data acquisition."""
+    """Evaluate daily historical snapshots without live market-data acquisition.
+
+    Analysis identity is derived from the legally visible observations
+    themselves. No reference-data resolution, provider lookup, or current-state
+    acquisition participates in historical evaluation.
+    """
 
     _SUPPORTED_TIMEFRAME = Timeframe("1d")
     _REQUIRED_HISTORY_LENGTH = 20
 
     def __init__(
         self,
-        listing_resolver: ListingResolver,
         strategy: Strategy,
         analysis_generator: AssetAnalysisGenerator,
     ) -> None:
-        if listing_resolver is None:
-            raise TypeError("listing_resolver cannot be None.")
-        if not isinstance(listing_resolver, ListingResolver):
-            raise TypeError("listing_resolver must be a ListingResolver.")
-        self._listing_resolver = listing_resolver
         self._context_analyzer = AnalyzeMarketObservationContextService(
             strategy=strategy,
             analysis_generator=analysis_generator,
@@ -65,18 +64,15 @@ class HistoricalSnapshotEvaluatorService(HistoricalSnapshotEvaluator):
         ):
             raise ValueError("Historical snapshot contains incompatible market identities.")
 
-        listing = self._listing_resolver.resolve_listing(
-            first_bar.symbol,
-            first_bar.exchange_code,
-            snapshot.replay_instant,
+        listing_reference = ListingReference(
+            symbol=first_bar.symbol,
+            exchange_code=first_bar.exchange_code,
         )
-        if not isinstance(listing, Listing):
-            raise TypeError("ListingResolver must return a Listing.")
         latest_bar = bars[-1]
         previous_bar = bars[-2]
         recent_bars = bars[-self._REQUIRED_HISTORY_LENGTH :]
         context = MarketObservationContext(
-            listing=listing,
+            listing_reference=listing_reference,
             observed_at=latest_bar.point_in_time,
             latest_price=latest_bar.close,
             previous_close=previous_bar.close,
