@@ -50,6 +50,10 @@ from northstar_application.application_services.record_forward_research_decision
 from northstar_application.application_services.replay_historical_market_data import (
     ReplayHistoricalMarketDataUseCase,
 )
+from northstar_application.application_services.run_forward_research import (
+    ForwardResearchRun,
+    RunForwardResearchUseCase,
+)
 from northstar_application.application_services.run_historical_research import (
     HistoricalResearchRun,
     RunHistoricalResearchUseCase,
@@ -86,4 +90,6 @@ __all__ = [
     "ForwardResearchMeasurement",
     "ForwardResearchMeasurementState",
     "MeasureForwardResearchRecordUseCase",
+    "ForwardResearchRun",
+    "RunForwardResearchUseCase",
 ]
