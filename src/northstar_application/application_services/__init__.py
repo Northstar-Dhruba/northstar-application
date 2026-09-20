@@ -12,9 +12,17 @@ from northstar_application.application_services.analyze_watchlist import (
     AnalyzeWatchlistResult,
     AnalyzeWatchlistUseCase,
 )
+from northstar_application.application_services.build_forward_research_report import (
+    BuildForwardResearchReportUseCase,
+    ForwardResearchReport,
+)
 from northstar_application.application_services.build_historical_research_report import (
     BuildHistoricalResearchReportUseCase,
     HistoricalResearchReport,
+)
+from northstar_application.application_services.calculate_forward_research_metrics import (
+    CalculateForwardResearchMetricsUseCase,
+    ForwardResearchStrategyHorizonMetrics,
 )
 from northstar_application.application_services.calculate_historical_research_metrics import (
     CalculateHistoricalResearchMetricsUseCase,
@@ -92,4 +100,8 @@ __all__ = [
     "MeasureForwardResearchRecordUseCase",
     "ForwardResearchRun",
     "RunForwardResearchUseCase",
+    "CalculateForwardResearchMetricsUseCase",
+    "ForwardResearchStrategyHorizonMetrics",
+    "BuildForwardResearchReportUseCase",
+    "ForwardResearchReport",
 ]

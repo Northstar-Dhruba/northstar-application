@@ -8,20 +8,17 @@ failure, sign inversion, profit and loss, or execution meaning.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 
 from northstar_core.foundation.value_objects import Percentage
 from northstar_core.strategy import ResearchHorizon
 
+from northstar_application.application_services._return_statistics import average, median
 from northstar_application.application_services.measure_recommendation_outcome import (
     RecommendationOutcomeUnavailableReason,
 )
 from northstar_application.application_services.run_historical_research import (
     HistoricalResearchRun,
 )
-
-_METRICS_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
-_TWO = Decimal(2)
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,32 +140,8 @@ class CalculateHistoricalResearchMetricsUseCase:
             measured_count=len(returns),
             insufficient_future_observations_count=insufficient,
             currency_mismatch_count=currency_mismatch,
-            average_forward_return=_average(ordered),
-            median_forward_return=_median(ordered),
+            average_forward_return=average(ordered),
+            median_forward_return=median(ordered),
             minimum_forward_return=ordered[0] if ordered else None,
             maximum_forward_return=ordered[-1] if ordered else None,
         )
-
-
-def _average(returns: tuple[Percentage, ...]) -> Percentage | None:
-    """Return the arithmetic mean of recorded movements, or None when empty."""
-    if not returns:
-        return None
-    with localcontext(_METRICS_CONTEXT):
-        total = Decimal(0)
-        for forward_return in returns:
-            total += forward_return.value
-        return Percentage(total / Decimal(len(returns)))
-
-
-def _median(returns: tuple[Percentage, ...]) -> Percentage | None:
-    """Return the median of ascending recorded movements, or None when empty."""
-    if not returns:
-        return None
-    middle = len(returns) // 2
-    if len(returns) % 2:
-        return returns[middle]
-    with localcontext(_METRICS_CONTEXT):
-        lower = returns[middle - 1].value
-        upper = returns[middle].value
-        return Percentage((lower + upper) / _TWO)
