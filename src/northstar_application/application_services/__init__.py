@@ -32,6 +32,11 @@ from northstar_application.application_services.ingest_historical_market_data im
     HistoricalMarketDataIngestionResult,
     IngestHistoricalMarketDataUseCase,
 )
+from northstar_application.application_services.measure_forward_research_record import (
+    ForwardResearchMeasurement,
+    ForwardResearchMeasurementState,
+    MeasureForwardResearchRecordUseCase,
+)
 from northstar_application.application_services.measure_recommendation_outcome import (
     MeasureRecommendationOutcomeUseCase,
     RecommendationOutcomeMeasurement,
@@ -78,4 +83,7 @@ __all__ = [
     "ForwardResearchContractViolationError",
     "ForwardResearchRecord",
     "RecordForwardResearchDecisionUseCase",
+    "ForwardResearchMeasurement",
+    "ForwardResearchMeasurementState",
+    "MeasureForwardResearchRecordUseCase",
 ]

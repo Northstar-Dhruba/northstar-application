@@ -133,7 +133,7 @@ def _measure(
     repository: HistoricalMarketDataRepository | None = None,
 ) -> RecommendationOutcomeMeasurement:
     return MeasureRecommendationOutcomeUseCase(repository or StubRepository(observations)).execute(
-        evaluation or _evaluation(),
+        (evaluation or _evaluation()).result,
         ResearchHorizon(horizon),
         timeframe,
         available_through,
@@ -154,15 +154,15 @@ def test_use_case_requires_a_historical_market_data_repository() -> None:
 
 
 @pytest.mark.parametrize(
-    "evaluation, horizon, timeframe, available_through, expected",
+    "result, horizon, timeframe, available_through, expected",
     [
-        (None, ResearchHorizon(1), _DAILY, _AVAILABLE_THROUGH, "evaluation cannot be None"),
-        ("evaluation", ResearchHorizon(1), _DAILY, _AVAILABLE_THROUGH, "must be a Historical"),
-        (object(), None, _DAILY, _AVAILABLE_THROUGH, "evaluation must be a Historical"),
+        (None, ResearchHorizon(1), _DAILY, _AVAILABLE_THROUGH, "result cannot be None"),
+        ("result", ResearchHorizon(1), _DAILY, _AVAILABLE_THROUGH, "must be an AnalyzeAssetResult"),
+        (object(), None, _DAILY, _AVAILABLE_THROUGH, "result must be an AnalyzeAssetResult"),
     ],
 )
 def test_execute_validates_inputs(
-    evaluation: object,
+    result: object,
     horizon: object,
     timeframe: object,
     available_through: object,
@@ -171,21 +171,21 @@ def test_execute_validates_inputs(
     use_case = MeasureRecommendationOutcomeUseCase(StubRepository())
 
     with pytest.raises(TypeError, match=expected):
-        use_case.execute(evaluation, horizon, timeframe, available_through)
+        use_case.execute(result, horizon, timeframe, available_through)
 
 
 def test_execute_rejects_invalid_horizon_timeframe_and_available_through() -> None:
     use_case = MeasureRecommendationOutcomeUseCase(StubRepository())
-    evaluation = _evaluation()
+    result = _evaluation().result
 
     with pytest.raises(TypeError, match="horizon cannot be None"):
-        use_case.execute(evaluation, None, _DAILY, _AVAILABLE_THROUGH)
+        use_case.execute(result, None, _DAILY, _AVAILABLE_THROUGH)
     with pytest.raises(TypeError, match="horizon must be a ResearchHorizon"):
-        use_case.execute(evaluation, 1, _DAILY, _AVAILABLE_THROUGH)
+        use_case.execute(result, 1, _DAILY, _AVAILABLE_THROUGH)
     with pytest.raises(TypeError, match="timeframe must be a Timeframe"):
-        use_case.execute(evaluation, ResearchHorizon(1), "1d", _AVAILABLE_THROUGH)
+        use_case.execute(result, ResearchHorizon(1), "1d", _AVAILABLE_THROUGH)
     with pytest.raises(TypeError, match="available-through must be a PointInTime"):
-        use_case.execute(evaluation, ResearchHorizon(1), _DAILY, "2026-03-01T16:00:00Z")
+        use_case.execute(result, ResearchHorizon(1), _DAILY, "2026-03-01T16:00:00Z")
 
 
 # ---------------------------------------------------------------------------
@@ -447,18 +447,15 @@ def test_rejects_recommendation_instant_that_differs_from_observed_at() -> None:
         recommendation=recommendation,
         reasons=(ExplanationReason(rationale="Divergent fixture."),),
     )
-    evaluation = HistoricalResearchEvaluation(
-        replay_instant=_DECISION_INSTANT,
-        result=AnalyzeAssetResult(
-            recommendation=recommendation,
-            explanation=explanation,
-            market_observation_context=context,
-        ),
+    divergent_result = AnalyzeAssetResult(
+        recommendation=recommendation,
+        explanation=explanation,
+        market_observation_context=context,
     )
     use_case = MeasureRecommendationOutcomeUseCase(StubRepository())
 
     with pytest.raises(ValueError, match="recommendation instant must match"):
-        use_case.execute(evaluation, ResearchHorizon(1), _DAILY, _AVAILABLE_THROUGH)
+        use_case.execute(divergent_result, ResearchHorizon(1), _DAILY, _AVAILABLE_THROUGH)
 
 
 def test_decision_instant_is_compared_semantically_not_textually() -> None:

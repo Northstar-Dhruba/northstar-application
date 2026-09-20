@@ -160,7 +160,7 @@ class RunHistoricalResearchUseCase:
 
         measurements = tuple(
             self._measure_recommendation_outcome.execute(
-                evaluation,
+                evaluation.result,
                 horizon,
                 timeframe,
                 available_through,
