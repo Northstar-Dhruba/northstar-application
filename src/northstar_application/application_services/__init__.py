@@ -37,6 +37,11 @@ from northstar_application.application_services.measure_recommendation_outcome i
     RecommendationOutcomeMeasurement,
     RecommendationOutcomeUnavailableReason,
 )
+from northstar_application.application_services.record_forward_research_decision import (
+    ForwardResearchContractViolationError,
+    ForwardResearchRecord,
+    RecordForwardResearchDecisionUseCase,
+)
 from northstar_application.application_services.replay_historical_market_data import (
     ReplayHistoricalMarketDataUseCase,
 )
@@ -70,4 +75,7 @@ __all__ = [
     "HistoricalResearchHorizonMetrics",
     "BuildHistoricalResearchReportUseCase",
     "HistoricalResearchReport",
+    "ForwardResearchContractViolationError",
+    "ForwardResearchRecord",
+    "RecordForwardResearchDecisionUseCase",
 ]
