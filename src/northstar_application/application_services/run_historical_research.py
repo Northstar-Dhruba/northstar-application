@@ -30,11 +30,24 @@ class HistoricalResearchRun:
     pair, ordered by evaluation first and horizon second. Unmeasurable pairs
     remain present as explicit measurements so no evaluated decision is ever
     silently dropped from a run.
+
+    ``timeframe`` and ``available_through`` record the run configuration that
+    cannot be reconstructed from the measurements themselves: the observation
+    interval a horizon counts, and the boundary beyond which no observation was
+    available. Without them an unavailable measurement cannot be distinguished
+    from a deliberately truncated data window.
+
+    A non-empty run is semantically homogeneous: every evaluation shares one
+    ListingReference and one StrategyIdentity, so the run describes one listed
+    asset researched under one strategy. Those values are not duplicated as run
+    fields; they remain owned by each evaluation's Recommendation.
     """
 
     evaluations: tuple[HistoricalResearchEvaluation, ...]
     horizons: tuple[ResearchHorizon, ...]
     measurements: tuple[RecommendationOutcomeMeasurement, ...]
+    timeframe: Timeframe
+    available_through: PointInTime
 
     def __post_init__(self) -> None:
         if not isinstance(self.evaluations, tuple):
@@ -46,6 +59,11 @@ class HistoricalResearchRun:
                 "HistoricalResearchRun evaluations must contain "
                 "HistoricalResearchEvaluation values."
             )
+        if not isinstance(self.timeframe, Timeframe):
+            raise TypeError("HistoricalResearchRun timeframe must be a Timeframe.")
+        if not isinstance(self.available_through, PointInTime):
+            raise TypeError("HistoricalResearchRun available-through must be a PointInTime.")
+        self._validate_homogeneous_identity()
         if not isinstance(self.horizons, tuple):
             raise TypeError("HistoricalResearchRun horizons must be a tuple.")
         if not all(isinstance(horizon, ResearchHorizon) for horizon in self.horizons):
@@ -83,6 +101,25 @@ class HistoricalResearchRun:
                 raise ValueError(
                     "HistoricalResearchRun measurements must follow horizon order "
                     "within each evaluation."
+                )
+
+    def _validate_homogeneous_identity(self) -> None:
+        """Require one listed asset and one strategy across a non-empty run."""
+        if not self.evaluations:
+            return
+
+        first = self.evaluations[0].result.recommendation
+        listing_reference = first.asset_analysis.listing_reference
+        strategy_identity = first.strategy_identity
+        for evaluation in self.evaluations[1:]:
+            recommendation = evaluation.result.recommendation
+            if recommendation.asset_analysis.listing_reference != listing_reference:
+                raise ValueError(
+                    "HistoricalResearchRun evaluations must share one listing reference."
+                )
+            if recommendation.strategy_identity != strategy_identity:
+                raise ValueError(
+                    "HistoricalResearchRun evaluations must share one strategy identity."
                 )
 
 
@@ -135,6 +172,8 @@ class RunHistoricalResearchUseCase:
             evaluations=evaluations,
             horizons=horizons,
             measurements=measurements,
+            timeframe=timeframe,
+            available_through=available_through,
         )
 
     @staticmethod

@@ -25,6 +25,7 @@ from northstar_core.strategy import (
 
 from northstar_application.application_services import (
     AnalyzeMarketObservationContextService,
+    CalculateHistoricalResearchMetricsUseCase,
     HistoricalResearchEvaluation,
     HistoricalResearchRun,
     MeasureRecommendationOutcomeUseCase,
@@ -75,14 +76,24 @@ class StubRepository(HistoricalMarketDataRepository):
         return tuple(
             bar
             for bar in self.observations
-            if query.start.compare(bar.point_in_time) <= 0
+            if bar.symbol == query.symbol
+            and bar.exchange_code == query.exchange_code
+            and bar.timeframe == query.timeframe
+            and query.start.compare(bar.point_in_time) <= 0
             and query.end.compare(bar.point_in_time) >= 0
         )
 
 
-def _evaluation(day: int, *, latest_close: str = "100") -> HistoricalResearchEvaluation:
+def _evaluation(
+    day: int,
+    *,
+    latest_close: str = "100",
+    symbol: str = "AAPL",
+    exchange: str = "NASDAQ",
+    strategy: str = "run-test",
+) -> HistoricalResearchEvaluation:
     context = MarketObservationContext(
-        ListingReference(_SYMBOL, _EXCHANGE),
+        ListingReference(Symbol(symbol), ExchangeCode(exchange)),
         _instant(day),
         Price(latest_close, _USD),
         Price("99", _USD),
@@ -93,7 +104,7 @@ def _evaluation(day: int, *, latest_close: str = "100") -> HistoricalResearchEva
         tuple(Quantity("1000") for _ in range(20)),
     )
     result = AnalyzeMarketObservationContextService(
-        strategy=Strategy(StrategyIdentity("run-test")),
+        strategy=Strategy(StrategyIdentity(strategy)),
         analysis_generator=AssetAnalysisGenerator(),
     ).execute(context)
     return HistoricalResearchEvaluation(replay_instant=_instant(day), result=result)
@@ -139,6 +150,21 @@ def _measurements_for(
         measure.execute(evaluation, horizon, _DAILY, _AVAILABLE_THROUGH)
         for evaluation in evaluations
         for horizon in horizons
+    )
+
+
+def _direct_run(
+    evaluations: object,
+    horizons: object,
+    measurements: object,
+) -> HistoricalResearchRun:
+    """Construct a run directly, supplying valid run configuration."""
+    return HistoricalResearchRun(
+        evaluations=evaluations,
+        horizons=horizons,
+        measurements=measurements,
+        timeframe=_DAILY,
+        available_through=_AVAILABLE_THROUGH,
     )
 
 
@@ -439,7 +465,7 @@ def test_run_requires_one_measurement_per_pair() -> None:
     evaluation = _evaluation(20)
 
     with pytest.raises(ValueError, match="one measurement for every"):
-        HistoricalResearchRun(
+        _direct_run(
             evaluations=(evaluation,),
             horizons=(ResearchHorizon(1), ResearchHorizon(2)),
             measurements=(),
@@ -451,9 +477,7 @@ def test_run_accepts_a_coherent_multi_evaluation_multi_horizon_construction() ->
     horizons = (ResearchHorizon(1), ResearchHorizon(2))
     measurements = _measurements_for(evaluations, horizons)
 
-    run = HistoricalResearchRun(
-        evaluations=evaluations, horizons=horizons, measurements=measurements
-    )
+    run = _direct_run(evaluations=evaluations, horizons=horizons, measurements=measurements)
 
     assert run.measurements == measurements
     assert [
@@ -474,7 +498,7 @@ def test_run_rejects_measurement_for_the_wrong_recommendation() -> None:
     wrong = (measurements[0], measurements[0])
 
     with pytest.raises(ValueError, match="must follow evaluation order"):
-        HistoricalResearchRun(evaluations=evaluations, horizons=horizons, measurements=wrong)
+        _direct_run(evaluations=evaluations, horizons=horizons, measurements=wrong)
 
 
 def test_run_rejects_measurement_for_the_wrong_horizon() -> None:
@@ -484,7 +508,7 @@ def test_run_rejects_measurement_for_the_wrong_horizon() -> None:
     wrong = (measurements[1], measurements[1])
 
     with pytest.raises(ValueError, match="must follow horizon order"):
-        HistoricalResearchRun(evaluations=evaluations, horizons=horizons, measurements=wrong)
+        _direct_run(evaluations=evaluations, horizons=horizons, measurements=wrong)
 
 
 def test_run_rejects_correct_measurements_in_the_wrong_order() -> None:
@@ -494,7 +518,7 @@ def test_run_rejects_correct_measurements_in_the_wrong_order() -> None:
     reordered = (measurements[1], measurements[0], measurements[2], measurements[3])
 
     with pytest.raises(ValueError, match="must follow horizon order"):
-        HistoricalResearchRun(evaluations=evaluations, horizons=horizons, measurements=reordered)
+        _direct_run(evaluations=evaluations, horizons=horizons, measurements=reordered)
 
 
 def test_run_rejects_evaluation_blocks_swapped_as_a_whole() -> None:
@@ -504,16 +528,143 @@ def test_run_rejects_evaluation_blocks_swapped_as_a_whole() -> None:
     swapped = measurements[2:] + measurements[:2]
 
     with pytest.raises(ValueError, match="must follow evaluation order"):
-        HistoricalResearchRun(evaluations=evaluations, horizons=horizons, measurements=swapped)
+        _direct_run(evaluations=evaluations, horizons=horizons, measurements=swapped)
 
 
 def test_run_rejects_non_tuple_members() -> None:
     with pytest.raises(TypeError, match="evaluations must be a tuple"):
-        HistoricalResearchRun(evaluations=[], horizons=(), measurements=())
+        _direct_run(evaluations=[], horizons=(), measurements=())
     with pytest.raises(TypeError, match="horizons must be a tuple"):
-        HistoricalResearchRun(evaluations=(), horizons=[], measurements=())
+        _direct_run(evaluations=(), horizons=[], measurements=())
     with pytest.raises(TypeError, match="measurements must be a tuple"):
-        HistoricalResearchRun(evaluations=(), horizons=(), measurements=[])
+        _direct_run(evaluations=(), horizons=(), measurements=[])
+
+
+# ---------------------------------------------------------------------------
+# Run configuration metadata
+# ---------------------------------------------------------------------------
+
+
+def test_timeframe_is_retained_on_the_run() -> None:
+    run = _use_case(_series()).execute(
+        (_evaluation(20),), (ResearchHorizon(1),), _DAILY, _AVAILABLE_THROUGH
+    )
+
+    assert run.timeframe == _DAILY
+
+
+def test_available_through_is_retained_on_the_run() -> None:
+    available_through = PointInTime("2026-02-10T16:00:00Z")
+
+    run = _use_case(_series()).execute(
+        (_evaluation(20),), (ResearchHorizon(1),), _DAILY, available_through
+    )
+
+    assert run.available_through == available_through
+
+
+def test_run_configuration_is_retained_for_an_empty_run() -> None:
+    run = _use_case().execute((), (ResearchHorizon(1),), _DAILY, _AVAILABLE_THROUGH)
+
+    assert run.timeframe == _DAILY
+    assert run.available_through == _AVAILABLE_THROUGH
+
+
+def test_run_does_not_duplicate_listing_or_strategy_as_run_fields() -> None:
+    run = _use_case(_series()).execute(
+        (_evaluation(20),), (ResearchHorizon(1),), _DAILY, _AVAILABLE_THROUGH
+    )
+
+    assert not hasattr(run, "listing_reference")
+    assert not hasattr(run, "strategy_identity")
+
+
+def test_run_rejects_invalid_configuration_types() -> None:
+    evaluation = _evaluation(20)
+    measurements = _measurements_for((evaluation,), (ResearchHorizon(1),))
+
+    with pytest.raises(TypeError, match="timeframe must be a Timeframe"):
+        HistoricalResearchRun(
+            evaluations=(evaluation,),
+            horizons=(ResearchHorizon(1),),
+            measurements=measurements,
+            timeframe="1d",
+            available_through=_AVAILABLE_THROUGH,
+        )
+    with pytest.raises(TypeError, match="available-through must be a PointInTime"):
+        HistoricalResearchRun(
+            evaluations=(evaluation,),
+            horizons=(ResearchHorizon(1),),
+            measurements=measurements,
+            timeframe=_DAILY,
+            available_through="2026-03-01T16:00:00Z",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Semantic homogeneity
+# ---------------------------------------------------------------------------
+
+
+def test_same_listing_and_strategy_are_accepted() -> None:
+    evaluations = (_evaluation(20), _evaluation(21), _evaluation(22))
+
+    run = _use_case(_series()).execute(
+        evaluations, (ResearchHorizon(1),), _DAILY, _AVAILABLE_THROUGH
+    )
+
+    assert run.evaluations == evaluations
+    assert len(run.measurements) == 3
+
+
+def test_mixed_listing_reference_is_rejected() -> None:
+    evaluations = (_evaluation(20), _evaluation(21, symbol="MSFT"))
+
+    with pytest.raises(ValueError, match="must share one listing reference"):
+        _use_case(_series()).execute(evaluations, (ResearchHorizon(1),), _DAILY, _AVAILABLE_THROUGH)
+
+
+def test_mixed_exchange_code_is_rejected_as_a_listing_difference() -> None:
+    evaluations = (_evaluation(20), _evaluation(21, exchange="NYSE"))
+
+    with pytest.raises(ValueError, match="must share one listing reference"):
+        _use_case(_series()).execute(evaluations, (ResearchHorizon(1),), _DAILY, _AVAILABLE_THROUGH)
+
+
+def test_mixed_strategy_identity_is_rejected() -> None:
+    evaluations = (_evaluation(20), _evaluation(21, strategy="momentum"))
+
+    with pytest.raises(ValueError, match="must share one strategy identity"):
+        _use_case(_series()).execute(evaluations, (ResearchHorizon(1),), _DAILY, _AVAILABLE_THROUGH)
+
+
+def test_empty_evaluations_remain_valid_without_homogeneity_checks() -> None:
+    run = _use_case().execute((), (ResearchHorizon(1),), _DAILY, _AVAILABLE_THROUGH)
+
+    assert run.evaluations == ()
+    assert run.measurements == ()
+
+
+def test_metrics_calculation_still_works_with_the_extended_run() -> None:
+    evaluations = (_evaluation(20), _evaluation(21))
+    horizons = (ResearchHorizon(1), ResearchHorizon(2))
+    run = _use_case(_series()).execute(evaluations, horizons, _DAILY, _AVAILABLE_THROUGH)
+
+    metrics = CalculateHistoricalResearchMetricsUseCase().execute(run)
+
+    assert [entry.horizon for entry in metrics] == list(horizons)
+    assert metrics[0].total_count == 2
+    assert metrics[0].measured_count == 2
+    assert run.timeframe == _DAILY
+    assert run.available_through == _AVAILABLE_THROUGH
+
+
+def test_single_evaluation_is_trivially_homogeneous() -> None:
+    run = _use_case(_series()).execute(
+        (_evaluation(20, strategy="solo"),), (ResearchHorizon(1),), _DAILY, _AVAILABLE_THROUGH
+    )
+
+    assert len(run.evaluations) == 1
 
 
 def test_run_applies_no_metrics_or_action_interpretation() -> None:
