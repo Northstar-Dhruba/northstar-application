@@ -32,6 +32,10 @@ from northstar_application.application_services.measure_recommendation_outcome i
 from northstar_application.application_services.replay_historical_market_data import (
     ReplayHistoricalMarketDataUseCase,
 )
+from northstar_application.application_services.run_historical_research import (
+    HistoricalResearchRun,
+    RunHistoricalResearchUseCase,
+)
 
 __all__ = [
     "AnalyzeAssetResult",
@@ -52,4 +56,6 @@ __all__ = [
     "MeasureRecommendationOutcomeUseCase",
     "RecommendationOutcomeMeasurement",
     "RecommendationOutcomeUnavailableReason",
+    "HistoricalResearchRun",
+    "RunHistoricalResearchUseCase",
 ]
