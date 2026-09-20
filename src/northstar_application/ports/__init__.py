@@ -3,6 +3,15 @@
 from northstar_application.ports.broker_port import BrokerPort
 from northstar_application.ports.event_publisher_port import EventPublisherPort
 from northstar_application.ports.exchange_port import ExchangePort
+from northstar_application.ports.forward_research_record_repository import (
+    ForwardResearchRecordQuery,
+    ForwardResearchRecordRepository,
+    InvalidForwardResearchRecordQueryError,
+)
+from northstar_application.ports.forward_research_record_store import (
+    ForwardResearchRecordConflictError,
+    ForwardResearchRecordStore,
+)
 from northstar_application.ports.historical_market_data_repository import (
     HistoricalMarketDataQuery,
     HistoricalMarketDataRepository,
@@ -25,6 +34,11 @@ __all__ = [
     "BrokerPort",
     "EventPublisherPort",
     "ExchangePort",
+    "ForwardResearchRecordConflictError",
+    "ForwardResearchRecordQuery",
+    "ForwardResearchRecordRepository",
+    "ForwardResearchRecordStore",
+    "InvalidForwardResearchRecordQueryError",
     "HistoricalMarketDataQuery",
     "HistoricalMarketDataRepository",
     "HistoricalMarketDataSource",
