@@ -12,6 +12,10 @@ from northstar_application.application_services.analyze_watchlist import (
     AnalyzeWatchlistResult,
     AnalyzeWatchlistUseCase,
 )
+from northstar_application.application_services.calculate_historical_research_metrics import (
+    CalculateHistoricalResearchMetricsUseCase,
+    HistoricalResearchHorizonMetrics,
+)
 from northstar_application.application_services.evaluate_historical_research import (
     EvaluateHistoricalResearchUseCase,
     HistoricalResearchEvaluation,
@@ -58,4 +62,6 @@ __all__ = [
     "RecommendationOutcomeUnavailableReason",
     "HistoricalResearchRun",
     "RunHistoricalResearchUseCase",
+    "CalculateHistoricalResearchMetricsUseCase",
+    "HistoricalResearchHorizonMetrics",
 ]
