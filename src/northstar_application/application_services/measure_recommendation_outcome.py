@@ -18,9 +18,7 @@ from northstar_core.strategy import (
     ResearchHorizon,
 )
 
-from northstar_application.application_services.evaluate_historical_research import (
-    HistoricalResearchEvaluation,
-)
+from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
 from northstar_application.application_services.ingest_historical_market_data import (
     HistoricalDataContractViolationError,
 )
@@ -115,16 +113,16 @@ class MeasureRecommendationOutcomeUseCase:
 
     def execute(
         self,
-        evaluation: HistoricalResearchEvaluation,
+        result: AnalyzeAssetResult,
         horizon: ResearchHorizon,
         timeframe: Timeframe,
         available_through: PointInTime,
     ) -> RecommendationOutcomeMeasurement:
-        """Measure the forward market movement following one evaluated decision."""
-        self._validate_inputs(evaluation, horizon, timeframe, available_through)
+        """Measure the forward market movement following one produced decision."""
+        self._validate_inputs(result, horizon, timeframe, available_through)
 
-        context = evaluation.result.market_observation_context
-        recommendation = evaluation.result.recommendation
+        context = result.market_observation_context
+        recommendation = result.recommendation
         decision_instant = context.observed_at
         if recommendation.point_in_time.compare(decision_instant) != 0:
             raise ValueError(
@@ -195,17 +193,16 @@ class MeasureRecommendationOutcomeUseCase:
 
     @staticmethod
     def _validate_inputs(
-        evaluation: HistoricalResearchEvaluation,
+        result: AnalyzeAssetResult,
         horizon: ResearchHorizon,
         timeframe: Timeframe,
         available_through: PointInTime,
     ) -> None:
-        if evaluation is None:
-            raise TypeError("MeasureRecommendationOutcomeUseCase evaluation cannot be None.")
-        if not isinstance(evaluation, HistoricalResearchEvaluation):
+        if result is None:
+            raise TypeError("MeasureRecommendationOutcomeUseCase result cannot be None.")
+        if not isinstance(result, AnalyzeAssetResult):
             raise TypeError(
-                "MeasureRecommendationOutcomeUseCase evaluation must be a "
-                "HistoricalResearchEvaluation."
+                "MeasureRecommendationOutcomeUseCase result must be an AnalyzeAssetResult."
             )
         if horizon is None:
             raise TypeError("MeasureRecommendationOutcomeUseCase horizon cannot be None.")

@@ -24,6 +24,7 @@ from northstar_core.strategy import (
 )
 
 from northstar_application.application_services import (
+    AnalyzeAssetResult,
     AnalyzeMarketObservationContextService,
     CalculateHistoricalResearchMetricsUseCase,
     HistoricalResearchEvaluation,
@@ -119,13 +120,14 @@ class RecordingMeasureUseCase(MeasureRecommendationOutcomeUseCase):
 
     def execute(
         self,
-        evaluation: HistoricalResearchEvaluation,
+        result: AnalyzeAssetResult,
         horizon: ResearchHorizon,
         timeframe: Timeframe,
         available_through: PointInTime,
     ) -> RecommendationOutcomeMeasurement:
-        self.calls.append((evaluation.replay_instant, horizon, timeframe, available_through))
-        return super().execute(evaluation, horizon, timeframe, available_through)
+        decision_instant = result.market_observation_context.observed_at
+        self.calls.append((decision_instant, horizon, timeframe, available_through))
+        return super().execute(result, horizon, timeframe, available_through)
 
 
 def _use_case(
@@ -147,7 +149,7 @@ def _measurements_for(
     """Build the coherent measurement tuple the use case would produce."""
     measure = MeasureRecommendationOutcomeUseCase(StubRepository(_series()))
     return tuple(
-        measure.execute(evaluation, horizon, _DAILY, _AVAILABLE_THROUGH)
+        measure.execute(evaluation.result, horizon, _DAILY, _AVAILABLE_THROUGH)
         for evaluation in evaluations
         for horizon in horizons
     )
@@ -416,7 +418,7 @@ def test_run_results_match_direct_measurement_results() -> None:
     evaluation = _evaluation(20)
     horizon = ResearchHorizon(2)
 
-    direct = measure.execute(evaluation, horizon, _DAILY, _AVAILABLE_THROUGH)
+    direct = measure.execute(evaluation.result, horizon, _DAILY, _AVAILABLE_THROUGH)
     run = RunHistoricalResearchUseCase(measure).execute(
         (evaluation,), (horizon,), _DAILY, _AVAILABLE_THROUGH
     )
