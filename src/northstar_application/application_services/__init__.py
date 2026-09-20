@@ -24,6 +24,11 @@ from northstar_application.application_services.ingest_historical_market_data im
     HistoricalMarketDataIngestionResult,
     IngestHistoricalMarketDataUseCase,
 )
+from northstar_application.application_services.measure_recommendation_outcome import (
+    MeasureRecommendationOutcomeUseCase,
+    RecommendationOutcomeMeasurement,
+    RecommendationOutcomeUnavailableReason,
+)
 from northstar_application.application_services.replay_historical_market_data import (
     ReplayHistoricalMarketDataUseCase,
 )
@@ -44,4 +49,7 @@ __all__ = [
     "HistoricalResearchEvaluation",
     "AnalyzeMarketObservationContextService",
     "HistoricalSnapshotEvaluatorService",
+    "MeasureRecommendationOutcomeUseCase",
+    "RecommendationOutcomeMeasurement",
+    "RecommendationOutcomeUnavailableReason",
 ]
