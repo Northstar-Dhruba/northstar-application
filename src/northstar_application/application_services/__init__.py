@@ -20,6 +20,10 @@ from northstar_application.application_services.build_historical_research_report
     BuildHistoricalResearchReportUseCase,
     HistoricalResearchReport,
 )
+from northstar_application.application_services.build_paper_portfolio import (
+    BuildPaperPortfolioUseCase,
+    InvalidPaperFillHistoryError,
+)
 from northstar_application.application_services.calculate_forward_research_metrics import (
     CalculateForwardResearchMetricsUseCase,
     ForwardResearchStrategyHorizonMetrics,
@@ -118,4 +122,6 @@ __all__ = [
     "ExecutionIntentNoIntentReason",
     "PaperExecution",
     "SimulatePaperExecutionUseCase",
+    "BuildPaperPortfolioUseCase",
+    "InvalidPaperFillHistoryError",
 ]
