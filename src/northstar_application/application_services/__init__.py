@@ -37,6 +37,10 @@ from northstar_application.application_services.create_execution_intent import (
     ExecutionIntentDecision,
     ExecutionIntentNoIntentReason,
 )
+from northstar_application.application_services.create_paper_execution_identities import (
+    CreatePaperExecutionIdentitiesUseCase,
+    PaperExecutionIdentities,
+)
 from northstar_application.application_services.evaluate_historical_research import (
     EvaluateHistoricalResearchUseCase,
     HistoricalResearchEvaluation,
@@ -120,6 +124,8 @@ __all__ = [
     "CreateExecutionIntentUseCase",
     "ExecutionIntentDecision",
     "ExecutionIntentNoIntentReason",
+    "CreatePaperExecutionIdentitiesUseCase",
+    "PaperExecutionIdentities",
     "PaperExecution",
     "SimulatePaperExecutionUseCase",
     "BuildPaperPortfolioUseCase",
