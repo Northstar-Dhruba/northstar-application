@@ -79,6 +79,11 @@ from northstar_application.application_services.run_historical_research import (
     HistoricalResearchRun,
     RunHistoricalResearchUseCase,
 )
+from northstar_application.application_services.run_paper_trading_decision import (
+    PaperTradingContractViolationError,
+    PaperTradingResult,
+    RunPaperTradingDecisionUseCase,
+)
 from northstar_application.application_services.simulate_paper_execution import (
     PaperExecution,
     SimulatePaperExecutionUseCase,
@@ -128,6 +133,9 @@ __all__ = [
     "PaperExecutionIdentities",
     "PaperExecution",
     "SimulatePaperExecutionUseCase",
+    "PaperTradingContractViolationError",
+    "PaperTradingResult",
+    "RunPaperTradingDecisionUseCase",
     "BuildPaperPortfolioUseCase",
     "InvalidPaperFillHistoryError",
 ]
