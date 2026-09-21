@@ -71,6 +71,10 @@ from northstar_application.application_services.run_historical_research import (
     HistoricalResearchRun,
     RunHistoricalResearchUseCase,
 )
+from northstar_application.application_services.simulate_paper_execution import (
+    PaperExecution,
+    SimulatePaperExecutionUseCase,
+)
 
 __all__ = [
     "AnalyzeAssetResult",
@@ -112,4 +116,6 @@ __all__ = [
     "CreateExecutionIntentUseCase",
     "ExecutionIntentDecision",
     "ExecutionIntentNoIntentReason",
+    "PaperExecution",
+    "SimulatePaperExecutionUseCase",
 ]
