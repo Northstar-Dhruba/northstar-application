@@ -23,17 +23,11 @@ from northstar_core.paper_trading import (
     Position,
 )
 
+from northstar_application.application_services._recommendation_action import executable_side
+from northstar_application.application_services._result_coherence import (
+    validate_result_coherence,
+)
 from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
-
-_HOLD_ACTION = "HOLD"
-
-# The Core recommendation vocabulary and the paper-trading direction vocabulary
-# are separate types with overlapping spellings, so the mapping between them is
-# stated once, explicitly, rather than inferred from the shared text.
-_ACTION_SIDES: dict[str, OrderSide] = {
-    "BUY": OrderSide.BUY,
-    "SELL": OrderSide.SELL,
-}
 
 
 class ExecutionIntentNoIntentReason(StrEnum):
@@ -102,18 +96,12 @@ class CreateExecutionIntentUseCase:
         reduced here.
         """
         self._validate_inputs(result, portfolio_identity, quantity, position)
-        self._validate_result_coherence(result)
+        validate_result_coherence(result, "CreateExecutionIntentUseCase")
 
         recommendation = result.recommendation
-        action = recommendation.action.value
-        if action == _HOLD_ACTION:
-            return ExecutionIntentDecision(no_intent_reason=ExecutionIntentNoIntentReason.HOLD)
-
-        side = _ACTION_SIDES.get(action)
+        side = executable_side(recommendation.action, "CreateExecutionIntentUseCase")
         if side is None:
-            raise ValueError(
-                f"CreateExecutionIntentUseCase cannot translate recommendation action {action!r}."
-            )
+            return ExecutionIntentDecision(no_intent_reason=ExecutionIntentNoIntentReason.HOLD)
 
         listing_reference = recommendation.asset_analysis.listing_reference
         if side is OrderSide.SELL and not self._position_supports_sale(position, result, quantity):
@@ -168,31 +156,3 @@ class CreateExecutionIntentUseCase:
             raise TypeError("CreateExecutionIntentUseCase quantity must be a Quantity.")
         if position is not None and not isinstance(position, Position):
             raise TypeError("CreateExecutionIntentUseCase position must be a Position or None.")
-
-    @staticmethod
-    def _validate_result_coherence(result: AnalyzeAssetResult) -> None:
-        """Reject evidence that disagrees with itself before translating it.
-
-        An intent inherits its listing and decision instant from the analysis,
-        so incoherent evidence would silently produce an intent attributed to
-        the wrong asset or the wrong instant.
-        """
-        context = result.market_observation_context
-        recommendation = result.recommendation
-        analysis = recommendation.asset_analysis
-
-        if recommendation.point_in_time.compare(context.observed_at) != 0:
-            raise ValueError(
-                "CreateExecutionIntentUseCase recommendation instant must match the "
-                "observed market context instant."
-            )
-        if analysis.point_in_time.compare(context.observed_at) != 0:
-            raise ValueError(
-                "CreateExecutionIntentUseCase asset analysis instant must match the "
-                "observed market context instant."
-            )
-        if analysis.listing_reference != context.listing_reference:
-            raise ValueError(
-                "CreateExecutionIntentUseCase asset analysis listing must match the "
-                "observed market context listing."
-            )

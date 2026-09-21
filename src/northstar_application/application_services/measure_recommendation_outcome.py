@@ -18,6 +18,9 @@ from northstar_core.strategy import (
     ResearchHorizon,
 )
 
+from northstar_application.application_services._result_coherence import (
+    validate_recommendation_instant,
+)
 from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
 from northstar_application.application_services.ingest_historical_market_data import (
     HistoricalDataContractViolationError,
@@ -124,11 +127,7 @@ class MeasureRecommendationOutcomeUseCase:
         context = result.market_observation_context
         recommendation = result.recommendation
         decision_instant = context.observed_at
-        if recommendation.point_in_time.compare(decision_instant) != 0:
-            raise ValueError(
-                "MeasureRecommendationOutcomeUseCase recommendation instant must match "
-                "the observed market context instant."
-            )
+        validate_recommendation_instant(result, "MeasureRecommendationOutcomeUseCase")
 
         if available_through.compare(decision_instant) < 0:
             return self._unavailable(
