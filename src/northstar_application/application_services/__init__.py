@@ -24,6 +24,10 @@ from northstar_application.application_services.build_paper_portfolio import (
     BuildPaperPortfolioUseCase,
     InvalidPaperFillHistoryError,
 )
+from northstar_application.application_services.build_paper_trading_report import (
+    BuildPaperTradingReportUseCase,
+    PaperTradingReport,
+)
 from northstar_application.application_services.calculate_forward_research_metrics import (
     CalculateForwardResearchMetricsUseCase,
     ForwardResearchStrategyHorizonMetrics,
@@ -31,6 +35,10 @@ from northstar_application.application_services.calculate_forward_research_metri
 from northstar_application.application_services.calculate_historical_research_metrics import (
     CalculateHistoricalResearchMetricsUseCase,
     HistoricalResearchHorizonMetrics,
+)
+from northstar_application.application_services.calculate_paper_trading_metrics import (
+    CalculatePaperTradingMetricsUseCase,
+    PaperTradingStrategyListingMetrics,
 )
 from northstar_application.application_services.create_execution_intent import (
     CreateExecutionIntentUseCase,
@@ -63,6 +71,7 @@ from northstar_application.application_services.measure_recommendation_outcome i
     RecommendationOutcomeMeasurement,
     RecommendationOutcomeUnavailableReason,
 )
+from northstar_application.application_services.paper_trading_run import PaperTradingRun
 from northstar_application.application_services.record_forward_research_decision import (
     ForwardResearchContractViolationError,
     ForwardResearchRecord,
@@ -136,6 +145,11 @@ __all__ = [
     "PaperTradingContractViolationError",
     "PaperTradingResult",
     "RunPaperTradingDecisionUseCase",
+    "PaperTradingRun",
+    "CalculatePaperTradingMetricsUseCase",
+    "PaperTradingStrategyListingMetrics",
+    "BuildPaperTradingReportUseCase",
+    "PaperTradingReport",
     "BuildPaperPortfolioUseCase",
     "InvalidPaperFillHistoryError",
 ]
