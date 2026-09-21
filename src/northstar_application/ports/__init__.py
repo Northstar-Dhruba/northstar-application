@@ -18,6 +18,15 @@ from northstar_application.ports.historical_market_data_source import Historical
 from northstar_application.ports.historical_market_data_store import HistoricalMarketDataStore
 from northstar_application.ports.historical_snapshot_evaluator import HistoricalSnapshotEvaluator
 from northstar_application.ports.market_observation_source import MarketObservationSource
+from northstar_application.ports.paper_fill_repository import (
+    InvalidPaperFillQueryError,
+    PaperFillQuery,
+    PaperFillRepository,
+)
+from northstar_application.ports.paper_fill_store import (
+    PaperFillConflictError,
+    PaperFillStore,
+)
 from northstar_application.ports.trading_session_resolver import (
     TradingSessionResolutionError,
     TradingSessionResolver,
@@ -36,6 +45,11 @@ __all__ = [
     "HistoricalSnapshotEvaluator",
     "InvalidHistoricalMarketDataQueryError",
     "MarketObservationSource",
+    "InvalidPaperFillQueryError",
+    "PaperFillConflictError",
+    "PaperFillQuery",
+    "PaperFillRepository",
+    "PaperFillStore",
     "TradingSessionResolutionError",
     "TradingSessionResolver",
 ]
