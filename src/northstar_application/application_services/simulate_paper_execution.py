@@ -20,7 +20,6 @@ from dataclasses import dataclass
 
 from northstar_core.paper_trading import (
     ExecutionIntent,
-    OrderSide,
     PaperFill,
     PaperFillIdentity,
     PaperOrder,
@@ -28,17 +27,11 @@ from northstar_core.paper_trading import (
     PaperOrderStatus,
 )
 
+from northstar_application.application_services._recommendation_action import executable_side
+from northstar_application.application_services._result_coherence import (
+    validate_result_coherence,
+)
 from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
-
-_HOLD_ACTION = "HOLD"
-
-# The Core recommendation vocabulary and the paper-trading direction vocabulary
-# are separate types with overlapping spellings, so the correspondence between
-# them is stated explicitly rather than inferred from the shared text.
-_ACTION_SIDES: dict[str, OrderSide] = {
-    "BUY": OrderSide.BUY,
-    "SELL": OrderSide.SELL,
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +79,7 @@ class SimulatePaperExecutionUseCase:
     ) -> PaperExecution:
         """Fill one approved intent at its decision-time observed price."""
         self._validate_inputs(intent, result, order_identity, fill_identity)
-        self._validate_result_coherence(result)
+        validate_result_coherence(result, "SimulatePaperExecutionUseCase")
         self._validate_intent_matches_evidence(intent, result)
 
         context = result.market_observation_context
@@ -134,29 +127,6 @@ class SimulatePaperExecutionUseCase:
             )
 
     @staticmethod
-    def _validate_result_coherence(result: AnalyzeAssetResult) -> None:
-        """Reject evidence that disagrees with itself before pricing from it."""
-        context = result.market_observation_context
-        recommendation = result.recommendation
-        analysis = recommendation.asset_analysis
-
-        if recommendation.point_in_time.compare(context.observed_at) != 0:
-            raise ValueError(
-                "SimulatePaperExecutionUseCase recommendation instant must match the "
-                "observed market context instant."
-            )
-        if analysis.point_in_time.compare(context.observed_at) != 0:
-            raise ValueError(
-                "SimulatePaperExecutionUseCase asset analysis instant must match the "
-                "observed market context instant."
-            )
-        if analysis.listing_reference != context.listing_reference:
-            raise ValueError(
-                "SimulatePaperExecutionUseCase asset analysis listing must match the "
-                "observed market context listing."
-            )
-
-    @staticmethod
     def _validate_intent_matches_evidence(
         intent: ExecutionIntent, result: AnalyzeAssetResult
     ) -> None:
@@ -185,15 +155,9 @@ class SimulatePaperExecutionUseCase:
                 "recommendation instant."
             )
 
-        action = recommendation.action.value
-        if action == _HOLD_ACTION:
-            raise ValueError("SimulatePaperExecutionUseCase cannot execute a HOLD recommendation.")
-
-        side = _ACTION_SIDES.get(action)
+        side = executable_side(recommendation.action, "SimulatePaperExecutionUseCase")
         if side is None:
-            raise ValueError(
-                f"SimulatePaperExecutionUseCase cannot execute recommendation action {action!r}."
-            )
+            raise ValueError("SimulatePaperExecutionUseCase cannot execute a HOLD recommendation.")
         if intent.side is not side:
             raise ValueError(
                 "SimulatePaperExecutionUseCase intent side must match the recommendation action."

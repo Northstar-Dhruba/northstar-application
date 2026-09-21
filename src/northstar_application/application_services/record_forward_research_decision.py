@@ -19,6 +19,9 @@ from northstar_core.foundation.value_objects import (
 )
 from northstar_core.strategy import StrategyIdentity
 
+from northstar_application.application_services._result_coherence import (
+    validate_result_coherence,
+)
 from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
 from northstar_application.ports import ForwardResearchRecordStore
 
@@ -53,24 +56,7 @@ class ForwardResearchRecord:
         if not isinstance(self.timeframe, Timeframe):
             raise TypeError("ForwardResearchRecord timeframe must be a Timeframe.")
 
-        context = self.result.market_observation_context
-        recommendation = self.result.recommendation
-        analysis = recommendation.asset_analysis
-        if recommendation.point_in_time.compare(context.observed_at) != 0:
-            raise ValueError(
-                "ForwardResearchRecord recommendation instant must match the observed "
-                "market context instant."
-            )
-        if analysis.point_in_time.compare(context.observed_at) != 0:
-            raise ValueError(
-                "ForwardResearchRecord asset analysis instant must match the observed "
-                "market context instant."
-            )
-        if analysis.listing_reference != context.listing_reference:
-            raise ValueError(
-                "ForwardResearchRecord asset analysis listing must match the observed "
-                "market context listing."
-            )
+        validate_result_coherence(self.result, "ForwardResearchRecord")
 
     @property
     def listing_reference(self) -> ListingReference:
