@@ -28,6 +28,11 @@ from northstar_application.application_services.calculate_historical_research_me
     CalculateHistoricalResearchMetricsUseCase,
     HistoricalResearchHorizonMetrics,
 )
+from northstar_application.application_services.create_execution_intent import (
+    CreateExecutionIntentUseCase,
+    ExecutionIntentDecision,
+    ExecutionIntentNoIntentReason,
+)
 from northstar_application.application_services.evaluate_historical_research import (
     EvaluateHistoricalResearchUseCase,
     HistoricalResearchEvaluation,
@@ -104,4 +109,7 @@ __all__ = [
     "ForwardResearchStrategyHorizonMetrics",
     "BuildForwardResearchReportUseCase",
     "ForwardResearchReport",
+    "CreateExecutionIntentUseCase",
+    "ExecutionIntentDecision",
+    "ExecutionIntentNoIntentReason",
 ]
