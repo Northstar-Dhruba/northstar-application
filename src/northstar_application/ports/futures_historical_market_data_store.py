@@ -39,14 +39,23 @@ class FuturesHistoricalMarketDataStore(ABC):
     providers to reissue corrected series, and the equity bar carries an
     adjusted_close field precisely to hold the restated value.
 
-    None of that applies to a futures contract. It has no splits and no
-    dividends, there is no adjusted close to restate, and once it expires its
-    history is closed for good. A differing bar under an existing key therefore
-    does not mean "a correction arrived"; it means two sources disagree about
-    what a settled contract did, or that a back-adjusted continuous series has
-    leaked in wearing a real contract's key. Both are conditions a research
-    platform must be told about rather than have resolved silently in favour of
-    whichever write happened to land last.
+    That particular mechanism does not apply to a futures contract: it has no
+    splits and no dividends, and no adjusted close to restate.
+
+    Futures observations can still be corrected. Exchanges revise settlement
+    prices, trades are busted after the fact, session volume is finalised late,
+    and providers reissue data they got wrong. A differing bar under an
+    existing key may therefore be a genuine correction, or two sources
+    disagreeing about what a settled contract did, or a back-adjusted
+    continuous series leaking in wearing a real contract's key.
+
+    Because those three look identical to a store, none of them may be applied
+    silently. Accepting a correction is a decision, not a write: the differing
+    evidence surfaces as a conflict, and an explicit reconciliation step -- one
+    that does not exist yet -- decides what is true. Last-write-wins would make
+    an ingestion bug indistinguishable from a legitimate revision, and would
+    make a replay's result depend on the order in which writes happened to
+    land.
 
     This follows ForwardResearchRecordStore rather than
     HistoricalMarketDataStore. Copying the equity rule would make an ingestion
