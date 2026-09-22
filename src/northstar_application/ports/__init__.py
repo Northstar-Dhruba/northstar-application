@@ -9,6 +9,15 @@ from northstar_application.ports.forward_research_record_store import (
     ForwardResearchRecordConflictError,
     ForwardResearchRecordStore,
 )
+from northstar_application.ports.futures_historical_market_data_repository import (
+    FuturesHistoricalMarketDataQuery,
+    FuturesHistoricalMarketDataRepository,
+    InvalidFuturesHistoricalMarketDataQueryError,
+)
+from northstar_application.ports.futures_historical_market_data_store import (
+    FuturesHistoricalMarketDataConflictError,
+    FuturesHistoricalMarketDataStore,
+)
 from northstar_application.ports.historical_market_data_repository import (
     HistoricalMarketDataQuery,
     HistoricalMarketDataRepository,
@@ -34,6 +43,11 @@ from northstar_application.ports.trading_session_resolver import (
 
 __all__ = [
     "ForwardResearchRecordConflictError",
+    "FuturesHistoricalMarketDataConflictError",
+    "FuturesHistoricalMarketDataQuery",
+    "FuturesHistoricalMarketDataRepository",
+    "FuturesHistoricalMarketDataStore",
+    "InvalidFuturesHistoricalMarketDataQueryError",
     "ForwardResearchRecordQuery",
     "ForwardResearchRecordRepository",
     "ForwardResearchRecordStore",
