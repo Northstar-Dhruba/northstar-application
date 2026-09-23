@@ -95,6 +95,10 @@ from northstar_application.application_services.measure_forward_research_record 
     ForwardResearchMeasurementState,
     MeasureForwardResearchRecordUseCase,
 )
+from northstar_application.application_services.measure_futures_forward_research_record import (
+    FuturesForwardResearchMeasurement,
+    MeasureFuturesForwardResearchRecordUseCase,
+)
 from northstar_application.application_services.measure_futures_recommendation_outcome import (
     MeasureFuturesRecommendationOutcomeUseCase,
 )
@@ -210,4 +214,6 @@ __all__ = [
     "FuturesHistoricalResearchStrategyHorizonMetrics",
     "FuturesForwardResearchRecord",
     "FreezeFuturesForwardResearchDecisionUseCase",
+    "FuturesForwardResearchMeasurement",
+    "MeasureFuturesForwardResearchRecordUseCase",
 ]
