@@ -81,6 +81,9 @@ from northstar_application.application_services.measure_forward_research_record 
     ForwardResearchMeasurementState,
     MeasureForwardResearchRecordUseCase,
 )
+from northstar_application.application_services.measure_futures_recommendation_outcome import (
+    MeasureFuturesRecommendationOutcomeUseCase,
+)
 from northstar_application.application_services.measure_recommendation_outcome import (
     MeasureRecommendationOutcomeUseCase,
     RecommendationOutcomeMeasurement,
@@ -180,4 +183,5 @@ __all__ = [
     "UnsupportedFuturesReplayTimeframeError",
     "AnalyzeFuturesReplaySnapshotService",
     "FuturesAnalysisResult",
+    "MeasureFuturesRecommendationOutcomeUseCase",
 ]
