@@ -635,16 +635,3 @@ def test_the_unsupported_timeframe_error_is_exported() -> None:
 
     assert "UnsupportedFuturesReplayTimeframeError" in services.__all__
     assert services.UnsupportedFuturesReplayTimeframeError is ViaModule
-
-
-def test_no_deferred_futures_research_concept_is_exported_yet() -> None:
-    """The research run landed in 9.7e1; metrics and reporting have not."""
-    import northstar_application.application_services as services
-
-    for deferred in (
-        "BuildFuturesMarketObservationContextUseCase",
-        "CalculateFuturesHistoricalResearchMetricsUseCase",
-        "BuildFuturesHistoricalResearchReportUseCase",
-        "FuturesHistoricalSnapshotEvaluator",
-    ):
-        assert deferred not in services.__all__

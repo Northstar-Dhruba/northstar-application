@@ -28,6 +28,10 @@ from northstar_application.application_services.build_forward_research_report im
     BuildForwardResearchReportUseCase,
     ForwardResearchReport,
 )
+from northstar_application.application_services.build_futures_research_report import (
+    BuildFuturesHistoricalResearchReportUseCase,
+    FuturesHistoricalResearchReport,
+)
 from northstar_application.application_services.build_historical_research_report import (
     BuildHistoricalResearchReportUseCase,
     HistoricalResearchReport,
@@ -43,6 +47,10 @@ from northstar_application.application_services.build_paper_trading_report impor
 from northstar_application.application_services.calculate_forward_research_metrics import (
     CalculateForwardResearchMetricsUseCase,
     ForwardResearchStrategyHorizonMetrics,
+)
+from northstar_application.application_services.calculate_futures_research_metrics import (
+    CalculateFuturesHistoricalResearchMetricsUseCase,
+    FuturesHistoricalResearchStrategyHorizonMetrics,
 )
 from northstar_application.application_services.calculate_historical_research_metrics import (
     CalculateHistoricalResearchMetricsUseCase,
@@ -190,4 +198,8 @@ __all__ = [
     "MeasureFuturesRecommendationOutcomeUseCase",
     "FuturesHistoricalResearchRun",
     "RunFuturesHistoricalResearchUseCase",
+    "BuildFuturesHistoricalResearchReportUseCase",
+    "CalculateFuturesHistoricalResearchMetricsUseCase",
+    "FuturesHistoricalResearchReport",
+    "FuturesHistoricalResearchStrategyHorizonMetrics",
 ]
