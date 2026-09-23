@@ -73,6 +73,9 @@ from northstar_application.application_services.evaluate_historical_research imp
     EvaluateHistoricalResearchUseCase,
     HistoricalResearchEvaluation,
 )
+from northstar_application.application_services.freeze_futures_forward_research_decision import (
+    FreezeFuturesForwardResearchDecisionUseCase,
+)
 from northstar_application.application_services.futures_analysis_result import (
     FuturesAnalysisResult,
 )
@@ -206,4 +209,5 @@ __all__ = [
     "FuturesHistoricalResearchReport",
     "FuturesHistoricalResearchStrategyHorizonMetrics",
     "FuturesForwardResearchRecord",
+    "FreezeFuturesForwardResearchDecisionUseCase",
 ]
