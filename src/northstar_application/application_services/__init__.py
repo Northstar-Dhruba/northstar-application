@@ -73,6 +73,11 @@ from northstar_application.application_services.create_execution_intent import (
     ExecutionIntentDecision,
     ExecutionIntentNoIntentReason,
 )
+from northstar_application.application_services.create_futures_execution_intent import (
+    CreateFuturesExecutionIntentUseCase,
+    FuturesExecutionIntentDecision,
+    FuturesExecutionIntentNoIntentReason,
+)
 from northstar_application.application_services.create_paper_execution_identities import (
     CreatePaperExecutionIdentitiesUseCase,
     PaperExecutionIdentities,
@@ -89,6 +94,9 @@ from northstar_application.application_services.futures_analysis_result import (
 )
 from northstar_application.application_services.futures_forward_research_record import (
     FuturesForwardResearchRecord,
+)
+from northstar_application.application_services.futures_paper_execution_identities import (
+    FuturesPaperExecutionIdentityService,
 )
 from northstar_application.application_services.historical_snapshot_evaluator import (
     HistoricalSnapshotEvaluatorService,
@@ -234,4 +242,8 @@ __all__ = [
     "CalculateFuturesForwardResearchMetricsUseCase",
     "FuturesForwardResearchReport",
     "FuturesForwardResearchStrategyHorizonMetrics",
+    "CreateFuturesExecutionIntentUseCase",
+    "FuturesExecutionIntentDecision",
+    "FuturesExecutionIntentNoIntentReason",
+    "FuturesPaperExecutionIdentityService",
 ]

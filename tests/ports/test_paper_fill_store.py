@@ -288,5 +288,7 @@ def test_no_holdings_persistence_port_exists() -> None:
     """Positions and portfolios are folded from fills, never stored."""
     import northstar_application.ports as ports
 
+    # Futures paper orders are persisted by design (9.9b); the equity rule is unchanged.
+    equity_names = [name for name in ports.__all__ if "FuturesPaper" not in name]
     for forbidden in ("Position", "PaperPortfolioStore", "PaperPortfolioRepository", "PaperOrder"):
-        assert not [name for name in ports.__all__ if forbidden in name]
+        assert not [name for name in equity_names if forbidden in name]
