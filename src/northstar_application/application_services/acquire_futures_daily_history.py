@@ -41,7 +41,7 @@ from northstar_application.ports import (
 
 
 class FuturesHistoricalDataContractViolationError(ValueError):
-    """Raised when a futures historical source or store violates the port contract."""
+    """Raised when a futures historical source, store or repository violates its port contract."""
 
 
 @dataclass(frozen=True, slots=True)
