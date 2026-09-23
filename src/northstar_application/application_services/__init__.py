@@ -86,6 +86,10 @@ from northstar_application.application_services.record_forward_research_decision
     ForwardResearchRecord,
     RecordForwardResearchDecisionUseCase,
 )
+from northstar_application.application_services.replay_futures_historical_market_data import (
+    ReplayFuturesHistoricalMarketDataUseCase,
+    UnsupportedFuturesReplayTimeframeError,
+)
 from northstar_application.application_services.replay_historical_market_data import (
     ReplayHistoricalMarketDataUseCase,
 )
@@ -166,4 +170,6 @@ __all__ = [
     "FuturesHistoricalDataContractViolationError",
     "InvalidFuturesSessionAggregationError",
     "InvalidPaperFillHistoryError",
+    "ReplayFuturesHistoricalMarketDataUseCase",
+    "UnsupportedFuturesReplayTimeframeError",
 ]
