@@ -11,6 +11,9 @@ from northstar_application.application_services.aggregate_futures_daily_session_
 )
 from northstar_application.application_services.analyze_asset import AnalyzeAssetUseCase
 from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
+from northstar_application.application_services.analyze_futures_replay_snapshot import (
+    AnalyzeFuturesReplaySnapshotService,
+)
 from northstar_application.application_services.analyze_market_observation_context import (
     AnalyzeMarketObservationContextService,
 )
@@ -61,6 +64,9 @@ from northstar_application.application_services.create_paper_execution_identitie
 from northstar_application.application_services.evaluate_historical_research import (
     EvaluateHistoricalResearchUseCase,
     HistoricalResearchEvaluation,
+)
+from northstar_application.application_services.futures_analysis_result import (
+    FuturesAnalysisResult,
 )
 from northstar_application.application_services.historical_snapshot_evaluator import (
     HistoricalSnapshotEvaluatorService,
@@ -172,4 +178,6 @@ __all__ = [
     "InvalidPaperFillHistoryError",
     "ReplayFuturesHistoricalMarketDataUseCase",
     "UnsupportedFuturesReplayTimeframeError",
+    "AnalyzeFuturesReplaySnapshotService",
+    "FuturesAnalysisResult",
 ]
