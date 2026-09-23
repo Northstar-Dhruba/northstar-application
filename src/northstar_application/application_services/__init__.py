@@ -106,6 +106,10 @@ from northstar_application.application_services.run_forward_research import (
     ForwardResearchRun,
     RunForwardResearchUseCase,
 )
+from northstar_application.application_services.run_futures_historical_research import (
+    FuturesHistoricalResearchRun,
+    RunFuturesHistoricalResearchUseCase,
+)
 from northstar_application.application_services.run_historical_research import (
     HistoricalResearchRun,
     RunHistoricalResearchUseCase,
@@ -184,4 +188,6 @@ __all__ = [
     "AnalyzeFuturesReplaySnapshotService",
     "FuturesAnalysisResult",
     "MeasureFuturesRecommendationOutcomeUseCase",
+    "FuturesHistoricalResearchRun",
+    "RunFuturesHistoricalResearchUseCase",
 ]
