@@ -15,6 +15,18 @@ a name and a signature whose meaning does not hold here, and it would pin the
 equity contract to an input type futures may later need to change. The two
 ports therefore stay independent; nothing here imports or modifies the equity
 one.
+
+Superseded
+----------
+This port is superseded by FuturesTradingSessionResolver, which returns the
+whole session window rather than only its completion instant, because daily
+aggregation needs both boundaries. It is retained only until
+northstar-infrastructure has migrated, and will then be removed. Nothing new
+should implement or depend on it, and no adapter needs both.
+
+FuturesSessionResolutionError now lives with the replacement port and is
+re-exported here unchanged, so existing `except FuturesSessionResolutionError`
+handlers keep catching exactly the same class.
 """
 
 from __future__ import annotations
@@ -25,9 +37,11 @@ from datetime import date
 from northstar_core.foundation.value_objects import PointInTime
 from northstar_core.futures import FuturesProductReference
 
+from northstar_application.ports.futures_trading_session_resolver import (
+    FuturesSessionResolutionError,
+)
 
-class FuturesSessionResolutionError(RuntimeError):
-    """Raised when futures session resolution cannot be performed reliably."""
+__all__ = ["FuturesDailyBarCompletionResolver", "FuturesSessionResolutionError"]
 
 
 class FuturesDailyBarCompletionResolver(ABC):
