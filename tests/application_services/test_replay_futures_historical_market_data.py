@@ -638,12 +638,12 @@ def test_the_unsupported_timeframe_error_is_exported() -> None:
 
 
 def test_no_deferred_futures_research_concept_is_exported_yet() -> None:
+    """Outcome measurement landed in 9.7d2; the research run has not."""
     import northstar_application.application_services as services
 
     for deferred in (
         "BuildFuturesMarketObservationContextUseCase",
         "RunFuturesHistoricalResearchUseCase",
-        "MeasureFuturesRecommendationOutcomeUseCase",
         "FuturesHistoricalResearchRun",
         "FuturesHistoricalSnapshotEvaluator",
     ):

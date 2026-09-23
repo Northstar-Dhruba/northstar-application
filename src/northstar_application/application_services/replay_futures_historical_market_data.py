@@ -38,10 +38,10 @@ construction would not say that the repository is at fault, nor which bar.
 from __future__ import annotations
 
 from northstar_core.foundation.value_objects import Timeframe
-from northstar_core.futures import FuturesOHLCVBar, FuturesReplaySnapshot
+from northstar_core.futures import FuturesReplaySnapshot
 
-from northstar_application.application_services.acquire_futures_daily_history import (
-    FuturesHistoricalDataContractViolationError,
+from northstar_application.application_services._futures_repository_output import (
+    validate_futures_repository_bars,
 )
 from northstar_application.ports import (
     FuturesHistoricalMarketDataQuery,
@@ -97,7 +97,7 @@ class ReplayFuturesHistoricalMarketDataUseCase:
             )
 
         bars = self._repository.get_bars(query)
-        self._validate_bars(bars, query)
+        validate_futures_repository_bars(bars, query)
 
         return tuple(
             FuturesReplaySnapshot(
@@ -108,47 +108,3 @@ class ReplayFuturesHistoricalMarketDataUseCase:
             )
             for index, bar in enumerate(bars)
         )
-
-    @staticmethod
-    def _validate_bars(bars: object, query: FuturesHistoricalMarketDataQuery) -> None:
-        if not isinstance(bars, tuple):
-            raise FuturesHistoricalDataContractViolationError(
-                "FuturesHistoricalMarketDataRepository must return a tuple of FuturesOHLCVBar."
-            )
-
-        for index, bar in enumerate(bars):
-            if not isinstance(bar, FuturesOHLCVBar):
-                raise FuturesHistoricalDataContractViolationError(
-                    f"FuturesHistoricalMarketDataRepository observation {index} "
-                    "must be a FuturesOHLCVBar."
-                )
-            if bar.contract != query.contract:
-                raise FuturesHistoricalDataContractViolationError(
-                    f"FuturesHistoricalMarketDataRepository observation {index} is for "
-                    f"{bar.contract}, not the queried contract {query.contract}."
-                )
-            if bar.timeframe != query.timeframe:
-                raise FuturesHistoricalDataContractViolationError(
-                    f"FuturesHistoricalMarketDataRepository observation {index} timeframe "
-                    f"{bar.timeframe} does not match the queried timeframe {query.timeframe}."
-                )
-            if not query.covers(bar.point_in_time):
-                raise FuturesHistoricalDataContractViolationError(
-                    f"FuturesHistoricalMarketDataRepository observation {index} at "
-                    f"{bar.point_in_time} is outside the queried window "
-                    f"[{query.start}, {query.end}]."
-                )
-            if index:
-                order = bars[index - 1].point_in_time.compare(bar.point_in_time)
-                if order == 0:
-                    raise FuturesHistoricalDataContractViolationError(
-                        f"FuturesHistoricalMarketDataRepository observations {index - 1} and "
-                        f"{index} share the instant {bar.point_in_time}; one contract and "
-                        "timeframe hold at most one bar per instant."
-                    )
-                if order > 0:
-                    raise FuturesHistoricalDataContractViolationError(
-                        f"FuturesHistoricalMarketDataRepository observations must be ordered "
-                        f"oldest to newest; observation {index} at {bar.point_in_time} "
-                        f"precedes observation {index - 1} at {bars[index - 1].point_in_time}."
-                    )
