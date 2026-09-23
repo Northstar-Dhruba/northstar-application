@@ -9,10 +9,6 @@ from northstar_application.ports.forward_research_record_store import (
     ForwardResearchRecordConflictError,
     ForwardResearchRecordStore,
 )
-from northstar_application.ports.futures_daily_bar_completion_resolver import (
-    FuturesDailyBarCompletionResolver,
-    FuturesSessionResolutionError,
-)
 from northstar_application.ports.futures_historical_market_data_repository import (
     FuturesHistoricalMarketDataQuery,
     FuturesHistoricalMarketDataRepository,
@@ -23,6 +19,7 @@ from northstar_application.ports.futures_historical_market_data_store import (
     FuturesHistoricalMarketDataStore,
 )
 from northstar_application.ports.futures_trading_session_resolver import (
+    FuturesSessionResolutionError,
     FuturesTradingSession,
     FuturesTradingSessionResolver,
     InvalidFuturesTradingSessionError,
@@ -52,7 +49,6 @@ from northstar_application.ports.trading_session_resolver import (
 
 __all__ = [
     "ForwardResearchRecordConflictError",
-    "FuturesDailyBarCompletionResolver",
     "FuturesHistoricalMarketDataConflictError",
     "FuturesHistoricalMarketDataQuery",
     "FuturesHistoricalMarketDataRepository",
