@@ -1,5 +1,9 @@
 """Application Services subpackage."""
 
+from northstar_application.application_services.aggregate_futures_daily_session_bar import (
+    AggregateFuturesDailySessionBarUseCase,
+    InvalidFuturesSessionAggregationError,
+)
 from northstar_application.application_services.analyze_asset import AnalyzeAssetUseCase
 from northstar_application.application_services.analyze_asset_result import AnalyzeAssetResult
 from northstar_application.application_services.analyze_market_observation_context import (
@@ -150,6 +154,8 @@ __all__ = [
     "PaperTradingStrategyListingMetrics",
     "BuildPaperTradingReportUseCase",
     "PaperTradingReport",
+    "AggregateFuturesDailySessionBarUseCase",
     "BuildPaperPortfolioUseCase",
+    "InvalidFuturesSessionAggregationError",
     "InvalidPaperFillHistoryError",
 ]
