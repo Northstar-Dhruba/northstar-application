@@ -76,6 +76,9 @@ from northstar_application.application_services.evaluate_historical_research imp
 from northstar_application.application_services.futures_analysis_result import (
     FuturesAnalysisResult,
 )
+from northstar_application.application_services.futures_forward_research_record import (
+    FuturesForwardResearchRecord,
+)
 from northstar_application.application_services.historical_snapshot_evaluator import (
     HistoricalSnapshotEvaluatorService,
 )
@@ -202,4 +205,5 @@ __all__ = [
     "CalculateFuturesHistoricalResearchMetricsUseCase",
     "FuturesHistoricalResearchReport",
     "FuturesHistoricalResearchStrategyHorizonMetrics",
+    "FuturesForwardResearchRecord",
 ]
