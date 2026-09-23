@@ -9,6 +9,10 @@ The session data below mirrors the real CME shape, including the properties
 that are easy to assume away -- sessions opening on the previous civil day, an
 early close, and a holiday gap where one session's open is nowhere near the
 previous session's close.
+
+This is now the only futures session-resolution port. The temporary
+completion-only port it replaced has been removed outright rather than
+deprecated, and the tests at the end of this module hold it gone.
 """
 
 from __future__ import annotations
@@ -23,7 +27,6 @@ from northstar_core.foundation.value_objects import ExchangeCode, PointInTime, S
 from northstar_core.futures import FuturesContract, FuturesProductReference
 
 from northstar_application.ports import (
-    FuturesDailyBarCompletionResolver,
     FuturesSessionResolutionError,
     FuturesTradingSession,
     FuturesTradingSessionResolver,
@@ -560,32 +563,51 @@ def test_the_new_port_imports_no_calendar_or_provider_library() -> None:
         assert not any(m.split(".")[0] == forbidden for m in modules), f"port imports {forbidden}"
 
 
-def test_the_two_futures_ports_are_unrelated_by_inheritance() -> None:
-    """Neither supersedes the other by subclassing; the old one is just retained."""
-    assert not issubclass(FuturesTradingSessionResolver, FuturesDailyBarCompletionResolver)
-    assert not issubclass(FuturesDailyBarCompletionResolver, FuturesTradingSessionResolver)
+def test_the_superseded_completion_port_is_gone() -> None:
+    """The temporary migration port was removed, not deprecated or aliased."""
+    import northstar_application.ports as ports
+
+    assert not hasattr(ports, "FuturesDailyBarCompletionResolver")
+    assert "FuturesDailyBarCompletionResolver" not in ports.__all__
 
 
-def test_the_superseded_port_remains_available_for_infrastructure() -> None:
-    """Temporary: northstar-infrastructure still implements this port."""
-    assert FuturesDailyBarCompletionResolver.__abstractmethods__ == frozenset(
-        {"resolve_completion"}
-    )
-    signature = inspect.signature(FuturesDailyBarCompletionResolver.resolve_completion)
-    assert list(signature.parameters) == ["self", "product", "trading_date"]
-    assert signature.return_annotation == "PointInTime | None"
+def test_the_superseded_module_no_longer_exists() -> None:
+    import importlib
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("northstar_application.ports.futures_daily_bar_completion_resolver")
+
+    ports_root = Path(importlib.import_module("northstar_application.ports").__file__).parent
+    assert not (ports_root / "futures_daily_bar_completion_resolver.py").exists()
 
 
-def test_one_session_resolution_error_serves_both_ports() -> None:
-    """A second equivalent error was deliberately not created."""
-    from northstar_application.ports.futures_daily_bar_completion_resolver import (
-        FuturesSessionResolutionError as ViaOldModule,
-    )
+def test_no_compatibility_alias_survives() -> None:
+    """A rename left behind as an alias would keep the dead port reachable."""
+    import northstar_application.ports as ports
+
+    for name in dir(ports):
+        assert "CompletionResolver" not in name
+    assert not any("Completion" in name for name in ports.__all__)
+
+
+def test_the_trading_session_resolver_is_the_only_futures_session_port() -> None:
+    import northstar_application.ports as ports
+
+    session_ports = [
+        name for name in ports.__all__ if name.endswith("Resolver") and "Futures" in name
+    ]
+
+    assert session_ports == ["FuturesTradingSessionResolver"]
+
+
+def test_the_session_resolution_error_remains_public() -> None:
+    """The error outlived the port it was first defined beside."""
+    import northstar_application.ports as ports
     from northstar_application.ports.futures_trading_session_resolver import (
-        FuturesSessionResolutionError as ViaNewModule,
+        FuturesSessionResolutionError as ViaModule,
     )
 
-    assert ViaOldModule is ViaNewModule is FuturesSessionResolutionError
+    assert ports.FuturesSessionResolutionError is ViaModule is FuturesSessionResolutionError
     assert issubclass(FuturesSessionResolutionError, RuntimeError)
     assert not issubclass(FuturesSessionResolutionError, TradingSessionResolutionError)
 
@@ -598,7 +620,6 @@ def test_the_public_surface_is_pinned() -> None:
         "FuturesTradingSessionResolver",
         "InvalidFuturesTradingSessionError",
         "FuturesSessionResolutionError",
-        "FuturesDailyBarCompletionResolver",
     ):
         assert name in ports.__all__
         assert getattr(ports, name) is not None
