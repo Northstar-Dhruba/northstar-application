@@ -625,13 +625,14 @@ def test_the_public_surface_is_pinned() -> None:
         assert getattr(ports, name) is not None
 
 
-def test_no_deferred_acquisition_concept_is_exported_yet() -> None:
+def test_no_deferred_futures_concept_is_exported_yet() -> None:
+    """The acquisition port and query landed in 9.6c4; these have not."""
     import northstar_application.ports as ports
 
     for deferred in (
-        "FuturesHistoricalMarketDataSource",
-        "FuturesDailyHistoricalAcquisitionQuery",
         "FuturesSettlementScheduleResolver",
         "ProviderSymbolResolver",
+        "ContinuousFuturesResolver",
+        "FuturesRolloverPolicy",
     ):
         assert deferred not in ports.__all__
