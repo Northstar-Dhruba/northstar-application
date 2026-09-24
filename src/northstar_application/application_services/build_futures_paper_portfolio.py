@@ -25,6 +25,7 @@ data and no clock, and persists nothing.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Context, localcontext
 
 from northstar_core.derivatives import QuoteValue
@@ -46,6 +47,93 @@ class InvalidFuturesPaperFillHistoryError(ValueError):
     """Raised when a futures paper fill history cannot produce a coherent portfolio."""
 
 
+@dataclass(frozen=True, slots=True)
+class _Transition:
+    """What one fill did to one contract's position.
+
+    ``contracts_closed`` is how much of the prior position the fill closed, and
+    ``closing_average_entry`` the basis it closed against; both are zero/None
+    when the fill only opened or added to exposure.
+    """
+
+    position: FuturesPosition | None
+    contracts_closed: int
+    closing_average_entry: QuoteValue | None
+
+
+def _transition(position: FuturesPosition | None, fill: FuturesPaperFill) -> _Transition:
+    """Apply one fill to one contract's position; the single futures fold rule."""
+    count = fill.contracts.value
+    delta = count if fill.side is OrderSide.BUY else -count
+    quote = fill.fill_quote
+
+    if position is None:
+        return _Transition(FuturesPosition(fill.contract, delta, quote), 0, None)
+
+    current = position.net_contracts
+    net = current + delta
+    if (current > 0) == (delta > 0):
+        held = abs(current)
+        with localcontext(_BASIS_CONTEXT):
+            average = (held * position.average_entry.value + count * quote.value) / (held + count)
+        return _Transition(FuturesPosition(fill.contract, net, QuoteValue(average)), 0, None)
+
+    closed = min(abs(delta), abs(current))
+    if net == 0:
+        resulting = None
+    elif abs(delta) < abs(current):
+        resulting = FuturesPosition(fill.contract, net, position.average_entry)
+    else:
+        resulting = FuturesPosition(fill.contract, net, quote)
+    return _Transition(resulting, closed, position.average_entry)
+
+
+def _validate_fill_history(
+    subject: str,
+    portfolio_identity: PaperPortfolioIdentity,
+    strategy_identity: StrategyIdentity,
+    fills: tuple[FuturesPaperFill, ...],
+) -> None:
+    """Require one owned, duplicate-free, canonically ordered history.
+
+    Every supplied fill is checked, including those after an as-of cutoff: a
+    foreign or duplicated fill is a defect in the history, not a matter of
+    timing.
+    """
+    seen_fills: set[str] = set()
+    seen_orders: set[str] = set()
+    previous: FuturesPaperFill | None = None
+    for fill in fills:
+        if fill.portfolio_identity != portfolio_identity:
+            raise InvalidFuturesPaperFillHistoryError(
+                f"{subject} fills must all belong to the requested portfolio."
+            )
+        if fill.strategy_identity != strategy_identity:
+            raise InvalidFuturesPaperFillHistoryError(
+                f"{subject} fills must all belong to the portfolio's strategy."
+            )
+        if fill.identity.identity in seen_fills:
+            raise InvalidFuturesPaperFillHistoryError(
+                f"{subject} fills cannot contain duplicate fill identities."
+            )
+        seen_fills.add(fill.identity.identity)
+        if fill.order_identity.identity in seen_orders:
+            raise InvalidFuturesPaperFillHistoryError(
+                f"{subject} fills cannot contain two fills for one order."
+            )
+        seen_orders.add(fill.order_identity.identity)
+
+        if previous is not None:
+            instant = previous.filled_at.compare(fill.filled_at)
+            if instant > 0 or (
+                instant == 0 and previous.order_identity.identity > fill.order_identity.identity
+            ):
+                raise InvalidFuturesPaperFillHistoryError(
+                    f"{subject} fills must be ordered by fill instant, then order identity."
+                )
+        previous = fill
+
+
 class BuildFuturesPaperPortfolioUseCase:
     """Derive one futures paper portfolio snapshot from its fills.
 
@@ -64,13 +152,15 @@ class BuildFuturesPaperPortfolioUseCase:
     ) -> FuturesPaperPortfolio:
         """Fold every fill visible at ``as_of`` into a portfolio snapshot."""
         self._validate_inputs(portfolio_identity, strategy_identity, fills, as_of)
-        self._validate_history(portfolio_identity, strategy_identity, fills)
+        _validate_fill_history(
+            "BuildFuturesPaperPortfolioUseCase", portfolio_identity, strategy_identity, fills
+        )
 
         held: dict[FuturesContract, FuturesPosition] = {}
         for fill in fills:
             if fill.filled_at.compare(as_of) > 0:
                 continue
-            updated = self._apply(held.get(fill.contract), fill)
+            updated = _transition(held.get(fill.contract), fill).position
             if updated is None:
                 del held[fill.contract]
             else:
@@ -85,31 +175,6 @@ class BuildFuturesPaperPortfolioUseCase:
             positions=positions,
             as_of=as_of,
         )
-
-    @staticmethod
-    def _apply(position: FuturesPosition | None, fill: FuturesPaperFill) -> FuturesPosition | None:
-        """Return the position after one fill, or None when it is closed."""
-        count = fill.contracts.value
-        delta = count if fill.side is OrderSide.BUY else -count
-        quote = fill.fill_quote
-
-        if position is None:
-            return FuturesPosition(fill.contract, delta, quote)
-
-        current = position.net_contracts
-        net = current + delta
-        if (current > 0) == (delta > 0):
-            held = abs(current)
-            with localcontext(_BASIS_CONTEXT):
-                average = (held * position.average_entry.value + count * quote.value) / (
-                    held + count
-                )
-            return FuturesPosition(fill.contract, net, QuoteValue(average))
-        if net == 0:
-            return None
-        if abs(delta) < abs(current):
-            return FuturesPosition(fill.contract, net, position.average_entry)
-        return FuturesPosition(fill.contract, net, quote)
 
     @staticmethod
     def _validate_inputs(
@@ -145,53 +210,3 @@ class BuildFuturesPaperPortfolioUseCase:
             raise TypeError(
                 "BuildFuturesPaperPortfolioUseCase as-of instant must be a PointInTime."
             )
-
-    @staticmethod
-    def _validate_history(
-        portfolio_identity: PaperPortfolioIdentity,
-        strategy_identity: StrategyIdentity,
-        fills: tuple[FuturesPaperFill, ...],
-    ) -> None:
-        """Require one owned, duplicate-free, canonically ordered history.
-
-        Every supplied fill is checked, including those after ``as_of``: a
-        foreign or duplicated fill is a defect in the history, not a matter of
-        timing.
-        """
-        seen_fills: set[str] = set()
-        seen_orders: set[str] = set()
-        previous: FuturesPaperFill | None = None
-        for fill in fills:
-            if fill.portfolio_identity != portfolio_identity:
-                raise InvalidFuturesPaperFillHistoryError(
-                    "BuildFuturesPaperPortfolioUseCase fills must all belong to the "
-                    "requested portfolio."
-                )
-            if fill.strategy_identity != strategy_identity:
-                raise InvalidFuturesPaperFillHistoryError(
-                    "BuildFuturesPaperPortfolioUseCase fills must all belong to the "
-                    "portfolio's strategy."
-                )
-            if fill.identity.identity in seen_fills:
-                raise InvalidFuturesPaperFillHistoryError(
-                    "BuildFuturesPaperPortfolioUseCase fills cannot contain duplicate "
-                    "fill identities."
-                )
-            seen_fills.add(fill.identity.identity)
-            if fill.order_identity.identity in seen_orders:
-                raise InvalidFuturesPaperFillHistoryError(
-                    "BuildFuturesPaperPortfolioUseCase fills cannot contain two fills for "
-                    "one order."
-                )
-            seen_orders.add(fill.order_identity.identity)
-
-            if previous is not None:
-                instant = previous.filled_at.compare(fill.filled_at)
-                if instant > 0 or (
-                    instant == 0 and previous.order_identity.identity > fill.order_identity.identity
-                ):
-                    raise InvalidFuturesPaperFillHistoryError(
-                        "BuildFuturesPaperPortfolioUseCase fills must be ordered by fill "
-                        "instant, then order identity."
-                    )
-            previous = fill
