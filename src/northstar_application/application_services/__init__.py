@@ -36,6 +36,10 @@ from northstar_application.application_services.build_futures_paper_portfolio im
     BuildFuturesPaperPortfolioUseCase,
     InvalidFuturesPaperFillHistoryError,
 )
+from northstar_application.application_services.build_futures_paper_trading_report import (
+    BuildFuturesPaperTradingReportUseCase,
+    FuturesPaperTradingReport,
+)
 from northstar_application.application_services.build_futures_research_report import (
     BuildFuturesHistoricalResearchReportUseCase,
     FuturesHistoricalResearchReport,
@@ -59,6 +63,10 @@ from northstar_application.application_services.calculate_forward_research_metri
 from northstar_application.application_services.calculate_futures_forward_metrics import (
     CalculateFuturesForwardResearchMetricsUseCase,
     FuturesForwardResearchStrategyHorizonMetrics,
+)
+from northstar_application.application_services.calculate_futures_paper_trading_metrics import (
+    CalculateFuturesPaperTradingMetricsUseCase,
+    FuturesPaperTradingStrategyContractMetrics,
 )
 from northstar_application.application_services.calculate_futures_research_metrics import (
     CalculateFuturesHistoricalResearchMetricsUseCase,
@@ -151,6 +159,10 @@ from northstar_application.application_services.run_futures_forward_research imp
 from northstar_application.application_services.run_futures_historical_research import (
     FuturesHistoricalResearchRun,
     RunFuturesHistoricalResearchUseCase,
+)
+from northstar_application.application_services.run_futures_paper_trading import (
+    FuturesPaperTradingRun,
+    RunFuturesPaperTradingUseCase,
 )
 from northstar_application.application_services.run_futures_paper_trading_decision import (
     FuturesPaperTradingContractViolationError,
@@ -264,4 +276,10 @@ __all__ = [
     "RunFuturesPaperTradingDecisionUseCase",
     "FuturesPaperTradingDecisionResult",
     "FuturesPaperTradingContractViolationError",
+    "FuturesPaperTradingRun",
+    "RunFuturesPaperTradingUseCase",
+    "FuturesPaperTradingStrategyContractMetrics",
+    "CalculateFuturesPaperTradingMetricsUseCase",
+    "FuturesPaperTradingReport",
+    "BuildFuturesPaperTradingReportUseCase",
 ]
