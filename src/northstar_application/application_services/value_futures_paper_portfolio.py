@@ -59,6 +59,29 @@ class FuturesProductEconomicsContractViolationError(ValueError):
     """Raised when a FuturesProductEconomicsRepository violates its contract."""
 
 
+def _economics_for(
+    subject: str,
+    repository: FuturesProductEconomicsRepository,
+    reference: FuturesProductReference,
+) -> FuturesProductEconomics:
+    """Look up one product's economics, failing on a missing or foreign answer."""
+    found = repository.get_economics(reference)
+    if found is None:
+        raise FuturesProductEconomicsNotFoundError(
+            f"{subject} has no product economics for {reference}."
+        )
+    if not isinstance(found, FuturesProductEconomics):
+        raise FuturesProductEconomicsContractViolationError(
+            "FuturesProductEconomicsRepository must return FuturesProductEconomics or None."
+        )
+    if found.reference != reference:
+        raise FuturesProductEconomicsContractViolationError(
+            f"FuturesProductEconomicsRepository returned economics for {found.reference} "
+            f"when asked for {reference}."
+        )
+    return found
+
+
 @dataclass(frozen=True, slots=True)
 class FuturesContractUnrealizedPnl:
     """Unrealized valuation attempted for one open futures position.
@@ -150,29 +173,12 @@ class ValueFuturesPaperPortfolioUseCase:
         for position in portfolio.positions:
             product = position.contract.product
             if product not in economics:
-                economics[product] = self._economics_for(product)
+                economics[product] = _economics_for(_SUBJECT, self._economics_repository, product)
 
         return tuple(
             self._value(position, economics[position.contract.product], available_through)
             for position in portfolio.positions
         )
-
-    def _economics_for(self, reference: FuturesProductReference) -> FuturesProductEconomics:
-        found = self._economics_repository.get_economics(reference)
-        if found is None:
-            raise FuturesProductEconomicsNotFoundError(
-                f"{_SUBJECT} has no product economics for {reference}."
-            )
-        if not isinstance(found, FuturesProductEconomics):
-            raise FuturesProductEconomicsContractViolationError(
-                "FuturesProductEconomicsRepository must return FuturesProductEconomics or None."
-            )
-        if found.reference != reference:
-            raise FuturesProductEconomicsContractViolationError(
-                f"FuturesProductEconomicsRepository returned economics for {found.reference} "
-                f"when asked for {reference}."
-            )
-        return found
 
     def _value(
         self,
