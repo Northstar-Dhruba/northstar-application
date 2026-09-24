@@ -50,6 +50,9 @@ from northstar_application.ports.futures_paper_order_store import (
     FuturesPaperOrderConflictError,
     FuturesPaperOrderStore,
 )
+from northstar_application.ports.futures_product_economics_repository import (
+    FuturesProductEconomicsRepository,
+)
 from northstar_application.ports.futures_trading_session_resolver import (
     FuturesSessionResolutionError,
     FuturesTradingSession,
@@ -100,6 +103,7 @@ __all__ = [
     "FuturesPaperOrderQuery",
     "FuturesPaperOrderRepository",
     "FuturesPaperOrderStore",
+    "FuturesProductEconomicsRepository",
     "InvalidFuturesPaperFillQueryError",
     "InvalidFuturesPaperOrderQueryError",
     "FuturesSessionResolutionError",
