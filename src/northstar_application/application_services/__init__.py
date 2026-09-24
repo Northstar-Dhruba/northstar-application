@@ -32,6 +32,10 @@ from northstar_application.application_services.build_futures_forward_report imp
     BuildFuturesForwardResearchReportUseCase,
     FuturesForwardResearchReport,
 )
+from northstar_application.application_services.build_futures_paper_portfolio import (
+    BuildFuturesPaperPortfolioUseCase,
+    InvalidFuturesPaperFillHistoryError,
+)
 from northstar_application.application_services.build_futures_research_report import (
     BuildFuturesHistoricalResearchReportUseCase,
     FuturesHistoricalResearchReport,
@@ -157,6 +161,9 @@ from northstar_application.application_services.run_paper_trading_decision impor
     PaperTradingResult,
     RunPaperTradingDecisionUseCase,
 )
+from northstar_application.application_services.simulate_futures_paper_order_fill import (
+    SimulateFuturesPaperOrderFillUseCase,
+)
 from northstar_application.application_services.simulate_paper_execution import (
     PaperExecution,
     SimulatePaperExecutionUseCase,
@@ -246,4 +253,7 @@ __all__ = [
     "FuturesExecutionIntentDecision",
     "FuturesExecutionIntentNoIntentReason",
     "FuturesPaperExecutionIdentityService",
+    "SimulateFuturesPaperOrderFillUseCase",
+    "BuildFuturesPaperPortfolioUseCase",
+    "InvalidFuturesPaperFillHistoryError",
 ]
