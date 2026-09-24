@@ -68,6 +68,11 @@ from northstar_application.application_services.calculate_futures_paper_trading_
     CalculateFuturesPaperTradingMetricsUseCase,
     FuturesPaperTradingStrategyContractMetrics,
 )
+from northstar_application.application_services.calculate_futures_realized_pnl import (
+    CalculateFuturesRealizedPnlUseCase,
+    FuturesContractRealizedPnl,
+    InvalidFuturesProductEconomicsInputError,
+)
 from northstar_application.application_services.calculate_futures_research_metrics import (
     CalculateFuturesHistoricalResearchMetricsUseCase,
     FuturesHistoricalResearchStrategyHorizonMetrics,
@@ -282,4 +287,7 @@ __all__ = [
     "CalculateFuturesPaperTradingMetricsUseCase",
     "FuturesPaperTradingReport",
     "BuildFuturesPaperTradingReportUseCase",
+    "FuturesContractRealizedPnl",
+    "CalculateFuturesRealizedPnlUseCase",
+    "InvalidFuturesProductEconomicsInputError",
 ]
