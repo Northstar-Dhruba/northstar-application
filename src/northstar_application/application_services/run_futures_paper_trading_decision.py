@@ -51,6 +51,7 @@ from northstar_core.paper_trading import (
     PaperOrderIdentity,
     PaperPortfolioIdentity,
 )
+from northstar_core.strategy import StrategyIdentity
 
 from northstar_application.application_services.build_futures_paper_portfolio import (
     BuildFuturesPaperPortfolioUseCase,
@@ -108,6 +109,132 @@ def _compare_orders(left: FuturesPaperOrder, right: FuturesPaperOrder) -> int:
 def _compare_fills(left: FuturesPaperFill, right: FuturesPaperFill) -> int:
     instant = left.filled_at.compare(right.filled_at)
     return instant or _compare_text(left.order_identity.identity, right.order_identity.identity)
+
+
+def _validate_forward_output(records: object, query: FuturesForwardResearchRecordQuery) -> None:
+    """Require forward repository output to honour its complete contract."""
+    if not isinstance(records, tuple):
+        raise ForwardResearchContractViolationError(
+            "FuturesForwardResearchRecordRepository must return a tuple of "
+            "FuturesForwardResearchRecord."
+        )
+    seen: set[tuple] = set()
+    previous: FuturesForwardResearchRecord | None = None
+    for index, item in enumerate(records):
+        if not isinstance(item, FuturesForwardResearchRecord):
+            raise ForwardResearchContractViolationError(
+                f"FuturesForwardResearchRecordRepository record {index} must be a "
+                "FuturesForwardResearchRecord."
+            )
+        if item.contract != query.contract or item.timeframe != query.timeframe:
+            raise ForwardResearchContractViolationError(
+                f"FuturesForwardResearchRecordRepository record {index} is not for the "
+                "queried contract and timeframe."
+            )
+        if item.natural_key in seen:
+            raise ForwardResearchContractViolationError(
+                f"FuturesForwardResearchRecordRepository record {index} repeats a natural key."
+            )
+        seen.add(item.natural_key)
+        if previous is not None and not _canonical_record_order(previous, item):
+            raise ForwardResearchContractViolationError(
+                "FuturesForwardResearchRecordRepository records must be ordered by decision "
+                f"instant, then strategy identity; record {index} is out of order."
+            )
+        previous = item
+
+
+def _load_orders(
+    repository: FuturesPaperOrderRepository, portfolio_identity: PaperPortfolioIdentity
+) -> tuple[FuturesPaperOrder, ...]:
+    orders = repository.get_orders(FuturesPaperOrderQuery(portfolio_identity))
+    if not isinstance(orders, tuple):
+        raise FuturesPaperTradingContractViolationError(
+            "FuturesPaperOrderRepository must return a tuple of FuturesPaperOrder."
+        )
+    previous: FuturesPaperOrder | None = None
+    for index, order in enumerate(orders):
+        if not isinstance(order, FuturesPaperOrder):
+            raise FuturesPaperTradingContractViolationError(
+                f"FuturesPaperOrderRepository order {index} must be a FuturesPaperOrder."
+            )
+        if order.intent.portfolio_identity != portfolio_identity:
+            raise FuturesPaperTradingContractViolationError(
+                f"FuturesPaperOrderRepository order {index} belongs to another portfolio."
+            )
+        # Strictly increasing, which also rejects a repeated order identity.
+        if previous is not None and _compare_orders(previous, order) >= 0:
+            raise FuturesPaperTradingContractViolationError(
+                "FuturesPaperOrderRepository orders must be uniquely ordered by decision "
+                f"instant, then order identity; order {index} is out of order."
+            )
+        previous = order
+    return orders
+
+
+def _load_fills(
+    repository: FuturesPaperFillRepository, portfolio_identity: PaperPortfolioIdentity
+) -> tuple[FuturesPaperFill, ...]:
+    fills = repository.get_fills(FuturesPaperFillQuery(portfolio_identity))
+    if not isinstance(fills, tuple):
+        raise FuturesPaperTradingContractViolationError(
+            "FuturesPaperFillRepository must return a tuple of FuturesPaperFill."
+        )
+    seen: set[str] = set()
+    previous: FuturesPaperFill | None = None
+    for index, fill in enumerate(fills):
+        if not isinstance(fill, FuturesPaperFill):
+            raise FuturesPaperTradingContractViolationError(
+                f"FuturesPaperFillRepository fill {index} must be a FuturesPaperFill."
+            )
+        if fill.portfolio_identity != portfolio_identity:
+            raise FuturesPaperTradingContractViolationError(
+                f"FuturesPaperFillRepository fill {index} belongs to another portfolio."
+            )
+        if fill.identity.identity in seen:
+            raise FuturesPaperTradingContractViolationError(
+                f"FuturesPaperFillRepository fill {index} repeats a fill identity."
+            )
+        seen.add(fill.identity.identity)
+        # Strictly increasing, which also rejects two fills for one order.
+        if previous is not None and _compare_fills(previous, fill) >= 0:
+            raise FuturesPaperTradingContractViolationError(
+                "FuturesPaperFillRepository fills must be uniquely ordered by fill instant, "
+                f"then order identity; fill {index} is out of order."
+            )
+        previous = fill
+    return fills
+
+
+def _load_history(
+    order_repository: FuturesPaperOrderRepository,
+    fill_repository: FuturesPaperFillRepository,
+    portfolio_identity: PaperPortfolioIdentity,
+    strategy_identity: StrategyIdentity,
+) -> tuple[tuple[FuturesPaperOrder, ...], tuple[FuturesPaperFill, ...]]:
+    """Load one portfolio's orders and fills and require one strategy's coherent history."""
+    orders = _load_orders(order_repository, portfolio_identity)
+    fills = _load_fills(fill_repository, portfolio_identity)
+    for order in orders:
+        if order.intent.strategy_identity != strategy_identity:
+            raise ValueError(
+                f"Futures paper portfolio {portfolio_identity} already holds orders for "
+                f"strategy {order.intent.strategy_identity}; one paper portfolio belongs to "
+                f"one strategy, not {strategy_identity}."
+            )
+    by_identity = {order.identity: order for order in orders}
+    for fill in fills:
+        order = by_identity.get(fill.order_identity)
+        if order is None:
+            raise FuturesPaperTradingContractViolationError(
+                f"FuturesPaperFillRepository fill {fill.identity} has no loaded order."
+            )
+        if fill.intent != order.intent:
+            raise FuturesPaperTradingContractViolationError(
+                f"FuturesPaperFillRepository fill {fill.identity} does not carry its "
+                "order's intent."
+            )
+    return orders, fills
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,9 +395,12 @@ class RunFuturesPaperTradingDecisionUseCase:
         self._validate_inputs(record, portfolio_identity, target_contracts, available_through)
         self._verify_frozen(record)
 
-        orders = self._load_orders(portfolio_identity)
-        fills = self._load_fills(portfolio_identity)
-        self._validate_history(record, portfolio_identity, orders, fills)
+        orders, fills = _load_history(
+            self._order_repository,
+            self._fill_repository,
+            portfolio_identity,
+            record.strategy_identity,
+        )
 
         fills = self._settle_pending(orders, fills, available_through)
 
@@ -324,7 +454,7 @@ class RunFuturesPaperTradingDecisionUseCase:
             contract=record.contract, timeframe=record.timeframe
         )
         stored = self._forward_repository.get_records(query)
-        self._validate_forward_output(stored, query)
+        _validate_forward_output(stored, query)
 
         candidate = next((item for item in stored if item.natural_key == record.natural_key), None)
         if candidate is None:
@@ -337,128 +467,6 @@ class RunFuturesPaperTradingDecisionUseCase:
                 "RunFuturesPaperTradingDecisionUseCase record differs from the frozen forward "
                 "research record persisted under its natural key."
             )
-
-    @staticmethod
-    def _validate_forward_output(records: object, query: FuturesForwardResearchRecordQuery) -> None:
-        if not isinstance(records, tuple):
-            raise ForwardResearchContractViolationError(
-                "FuturesForwardResearchRecordRepository must return a tuple of "
-                "FuturesForwardResearchRecord."
-            )
-        seen: set[tuple] = set()
-        previous: FuturesForwardResearchRecord | None = None
-        for index, item in enumerate(records):
-            if not isinstance(item, FuturesForwardResearchRecord):
-                raise ForwardResearchContractViolationError(
-                    f"FuturesForwardResearchRecordRepository record {index} must be a "
-                    "FuturesForwardResearchRecord."
-                )
-            if item.contract != query.contract or item.timeframe != query.timeframe:
-                raise ForwardResearchContractViolationError(
-                    f"FuturesForwardResearchRecordRepository record {index} is not for the "
-                    "queried contract and timeframe."
-                )
-            if item.natural_key in seen:
-                raise ForwardResearchContractViolationError(
-                    f"FuturesForwardResearchRecordRepository record {index} repeats a natural key."
-                )
-            seen.add(item.natural_key)
-            if previous is not None and not _canonical_record_order(previous, item):
-                raise ForwardResearchContractViolationError(
-                    "FuturesForwardResearchRecordRepository records must be ordered by decision "
-                    f"instant, then strategy identity; record {index} is out of order."
-                )
-            previous = item
-
-    # -- paper history -----------------------------------------------------
-
-    def _load_orders(
-        self, portfolio_identity: PaperPortfolioIdentity
-    ) -> tuple[FuturesPaperOrder, ...]:
-        orders = self._order_repository.get_orders(FuturesPaperOrderQuery(portfolio_identity))
-        if not isinstance(orders, tuple):
-            raise FuturesPaperTradingContractViolationError(
-                "FuturesPaperOrderRepository must return a tuple of FuturesPaperOrder."
-            )
-        previous: FuturesPaperOrder | None = None
-        for index, order in enumerate(orders):
-            if not isinstance(order, FuturesPaperOrder):
-                raise FuturesPaperTradingContractViolationError(
-                    f"FuturesPaperOrderRepository order {index} must be a FuturesPaperOrder."
-                )
-            if order.intent.portfolio_identity != portfolio_identity:
-                raise FuturesPaperTradingContractViolationError(
-                    f"FuturesPaperOrderRepository order {index} belongs to another portfolio."
-                )
-            # Strictly increasing, which also rejects a repeated order identity.
-            if previous is not None and _compare_orders(previous, order) >= 0:
-                raise FuturesPaperTradingContractViolationError(
-                    "FuturesPaperOrderRepository orders must be uniquely ordered by decision "
-                    f"instant, then order identity; order {index} is out of order."
-                )
-            previous = order
-        return orders
-
-    def _load_fills(
-        self, portfolio_identity: PaperPortfolioIdentity
-    ) -> tuple[FuturesPaperFill, ...]:
-        fills = self._fill_repository.get_fills(FuturesPaperFillQuery(portfolio_identity))
-        if not isinstance(fills, tuple):
-            raise FuturesPaperTradingContractViolationError(
-                "FuturesPaperFillRepository must return a tuple of FuturesPaperFill."
-            )
-        seen: set[str] = set()
-        previous: FuturesPaperFill | None = None
-        for index, fill in enumerate(fills):
-            if not isinstance(fill, FuturesPaperFill):
-                raise FuturesPaperTradingContractViolationError(
-                    f"FuturesPaperFillRepository fill {index} must be a FuturesPaperFill."
-                )
-            if fill.portfolio_identity != portfolio_identity:
-                raise FuturesPaperTradingContractViolationError(
-                    f"FuturesPaperFillRepository fill {index} belongs to another portfolio."
-                )
-            if fill.identity.identity in seen:
-                raise FuturesPaperTradingContractViolationError(
-                    f"FuturesPaperFillRepository fill {index} repeats a fill identity."
-                )
-            seen.add(fill.identity.identity)
-            # Strictly increasing, which also rejects two fills for one order.
-            if previous is not None and _compare_fills(previous, fill) >= 0:
-                raise FuturesPaperTradingContractViolationError(
-                    "FuturesPaperFillRepository fills must be uniquely ordered by fill instant, "
-                    f"then order identity; fill {index} is out of order."
-                )
-            previous = fill
-        return fills
-
-    @staticmethod
-    def _validate_history(
-        record: FuturesForwardResearchRecord,
-        portfolio_identity: PaperPortfolioIdentity,
-        orders: tuple[FuturesPaperOrder, ...],
-        fills: tuple[FuturesPaperFill, ...],
-    ) -> None:
-        """Require one strategy's coherent history before anything is written."""
-        for order in orders:
-            if order.intent.strategy_identity != record.strategy_identity:
-                raise ValueError(
-                    f"RunFuturesPaperTradingDecisionUseCase portfolio {portfolio_identity} "
-                    f"already holds orders for strategy {order.intent.strategy_identity}; one "
-                    f"paper portfolio belongs to one strategy, not {record.strategy_identity}."
-                )
-        by_identity = {order.identity: order for order in orders}
-        for fill in fills:
-            order = by_identity.get(fill.order_identity)
-            if order is None:
-                raise FuturesPaperTradingContractViolationError(
-                    f"FuturesPaperFillRepository fill {fill.identity} has no loaded order."
-                )
-            if fill.intent != order.intent:
-                raise FuturesPaperTradingContractViolationError(
-                    f"FuturesPaperFillRepository fill {fill.identity} does not carry its "
-                    "order's intent."
-                )
 
     # -- settlement --------------------------------------------------------
 
