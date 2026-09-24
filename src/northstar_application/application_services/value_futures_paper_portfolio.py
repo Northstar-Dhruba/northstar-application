@@ -52,7 +52,14 @@ _SUBJECT = "ValueFuturesPaperPortfolioUseCase"
 
 
 class FuturesProductEconomicsNotFoundError(ValueError):
-    """Raised when an open position's product has no configured economics."""
+    """Raised when a product that must be valued has no configured economics.
+
+    ``reference`` names the product, so callers never parse the message.
+    """
+
+    def __init__(self, message: str, reference: FuturesProductReference | None = None) -> None:
+        super().__init__(message)
+        self.reference = reference
 
 
 class FuturesProductEconomicsContractViolationError(ValueError):
@@ -68,7 +75,7 @@ def _economics_for(
     found = repository.get_economics(reference)
     if found is None:
         raise FuturesProductEconomicsNotFoundError(
-            f"{subject} has no product economics for {reference}."
+            f"{subject} has no product economics for {reference}.", reference
         )
     if not isinstance(found, FuturesProductEconomics):
         raise FuturesProductEconomicsContractViolationError(
