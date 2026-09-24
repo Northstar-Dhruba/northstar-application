@@ -40,6 +40,11 @@ from northstar_application.application_services.build_futures_paper_trading_repo
     BuildFuturesPaperTradingReportUseCase,
     FuturesPaperTradingReport,
 )
+from northstar_application.application_services.build_futures_paper_trading_valuation import (
+    BuildFuturesPaperTradingValuationUseCase,
+    FuturesContractPnl,
+    FuturesPaperTradingValuation,
+)
 from northstar_application.application_services.build_futures_research_report import (
     BuildFuturesHistoricalResearchReportUseCase,
     FuturesHistoricalResearchReport,
@@ -293,6 +298,9 @@ __all__ = [
     "CalculateFuturesPaperTradingMetricsUseCase",
     "FuturesPaperTradingReport",
     "BuildFuturesPaperTradingReportUseCase",
+    "BuildFuturesPaperTradingValuationUseCase",
+    "FuturesContractPnl",
+    "FuturesPaperTradingValuation",
     "FuturesContractRealizedPnl",
     "CalculateFuturesRealizedPnlUseCase",
     "InvalidFuturesProductEconomicsInputError",
