@@ -175,9 +175,14 @@ from northstar_application.application_services.run_futures_paper_trading import
     RunFuturesPaperTradingUseCase,
 )
 from northstar_application.application_services.run_futures_paper_trading_decision import (
+    FuturesPaperPortfolioStrategyConflictError,
     FuturesPaperTradingContractViolationError,
     FuturesPaperTradingDecisionResult,
     RunFuturesPaperTradingDecisionUseCase,
+)
+from northstar_application.application_services.run_futures_paper_trading_session import (
+    FuturesPaperTradingSessionResult,
+    RunFuturesPaperTradingSessionUseCase,
 )
 from northstar_application.application_services.run_historical_research import (
     HistoricalResearchRun,
@@ -292,6 +297,9 @@ __all__ = [
     "RunFuturesPaperTradingDecisionUseCase",
     "FuturesPaperTradingDecisionResult",
     "FuturesPaperTradingContractViolationError",
+    "FuturesPaperPortfolioStrategyConflictError",
+    "FuturesPaperTradingSessionResult",
+    "RunFuturesPaperTradingSessionUseCase",
     "FuturesPaperTradingRun",
     "RunFuturesPaperTradingUseCase",
     "FuturesPaperTradingStrategyContractMetrics",

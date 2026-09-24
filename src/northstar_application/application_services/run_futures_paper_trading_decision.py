@@ -97,6 +97,14 @@ class FuturesPaperTradingContractViolationError(ValueError):
     """Raised when a futures paper-trading port violates its contract."""
 
 
+class FuturesPaperPortfolioStrategyConflictError(ValueError):
+    """Raised when a paper portfolio's persisted facts belong to another strategy.
+
+    One PaperPortfolioIdentity belongs to exactly one strategy once execution
+    facts exist; history is rejected, never filtered to the requested strategy.
+    """
+
+
 def _compare_text(left: str, right: str) -> int:
     return (left > right) - (left < right)
 
@@ -217,7 +225,7 @@ def _load_history(
     fills = _load_fills(fill_repository, portfolio_identity)
     for order in orders:
         if order.intent.strategy_identity != strategy_identity:
-            raise ValueError(
+            raise FuturesPaperPortfolioStrategyConflictError(
                 f"Futures paper portfolio {portfolio_identity} already holds orders for "
                 f"strategy {order.intent.strategy_identity}; one paper portfolio belongs to "
                 f"one strategy, not {strategy_identity}."
