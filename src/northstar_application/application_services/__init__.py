@@ -120,6 +120,11 @@ from northstar_application.application_services.futures_forward_research_record 
 from northstar_application.application_services.futures_paper_execution_identities import (
     FuturesPaperExecutionIdentityService,
 )
+from northstar_application.application_services.get_futures_paper_trading_snapshot import (
+    FuturesPaperDecisionSnapshot,
+    FuturesPaperTradingSnapshot,
+    GetFuturesPaperTradingSnapshotUseCase,
+)
 from northstar_application.application_services.historical_snapshot_evaluator import (
     HistoricalSnapshotEvaluatorService,
 )
@@ -291,6 +296,9 @@ __all__ = [
     "FuturesExecutionIntentDecision",
     "FuturesExecutionIntentNoIntentReason",
     "FuturesPaperExecutionIdentityService",
+    "FuturesPaperDecisionSnapshot",
+    "FuturesPaperTradingSnapshot",
+    "GetFuturesPaperTradingSnapshotUseCase",
     "SimulateFuturesPaperOrderFillUseCase",
     "BuildFuturesPaperPortfolioUseCase",
     "InvalidFuturesPaperFillHistoryError",
