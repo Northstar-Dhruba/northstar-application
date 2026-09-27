@@ -76,7 +76,7 @@ from northstar_application.application_services.calculate_futures_paper_trading_
 from northstar_application.application_services.calculate_futures_realized_pnl import (
     CalculateFuturesRealizedPnlUseCase,
     FuturesContractRealizedPnl,
-    InvalidFuturesProductEconomicsInputError,
+    InvalidFuturesContractEconomicsInputError,
 )
 from northstar_application.application_services.calculate_futures_research_metrics import (
     CalculateFuturesHistoricalResearchMetricsUseCase,
@@ -206,9 +206,9 @@ from northstar_application.application_services.simulate_paper_execution import 
     SimulatePaperExecutionUseCase,
 )
 from northstar_application.application_services.value_futures_paper_portfolio import (
+    FuturesContractEconomicsContractViolationError,
+    FuturesContractEconomicsNotFoundError,
     FuturesContractUnrealizedPnl,
-    FuturesProductEconomicsContractViolationError,
-    FuturesProductEconomicsNotFoundError,
     ValueFuturesPaperPortfolioUseCase,
 )
 
@@ -319,9 +319,9 @@ __all__ = [
     "FuturesPaperTradingValuation",
     "FuturesContractRealizedPnl",
     "CalculateFuturesRealizedPnlUseCase",
-    "InvalidFuturesProductEconomicsInputError",
+    "InvalidFuturesContractEconomicsInputError",
     "FuturesContractUnrealizedPnl",
-    "FuturesProductEconomicsContractViolationError",
-    "FuturesProductEconomicsNotFoundError",
+    "FuturesContractEconomicsContractViolationError",
+    "FuturesContractEconomicsNotFoundError",
     "ValueFuturesPaperPortfolioUseCase",
 ]

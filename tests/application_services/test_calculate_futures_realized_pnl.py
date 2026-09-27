@@ -26,6 +26,7 @@ from northstar_core.foundation.value_objects import (
 )
 from northstar_core.futures import (
     FuturesContract,
+    FuturesContractEconomics,
     FuturesPointValue,
     FuturesProductEconomics,
     FuturesProductReference,
@@ -46,19 +47,28 @@ from northstar_application.application_services import (
     BuildFuturesPaperPortfolioUseCase,
     CalculateFuturesRealizedPnlUseCase,
     FuturesContractRealizedPnl,
+    InvalidFuturesContractEconomicsInputError,
     InvalidFuturesPaperFillHistoryError,
-    InvalidFuturesProductEconomicsInputError,
 )
 
 _USD = Currency("USD")
 _EUR = Currency("EUR")
+_INR = Currency("INR")
 _ES = FuturesProductReference(Symbol("ES"), ExchangeCode("CME"))
 _FESX = FuturesProductReference(Symbol("FESX"), ExchangeCode("EUREX"))
 _ES_DEC = FuturesContract(_ES, ExpirationDate("2026-12-18"))
 _ES_MAR = FuturesContract(_ES, ExpirationDate("2027-03-19"))
 _FESX_DEC = FuturesContract(_FESX, ExpirationDate("2026-12-18"))
-_ES_ECONOMICS = FuturesProductEconomics(_ES, FuturesPointValue(Decimal("50"), _USD))
-_FESX_ECONOMICS = FuturesProductEconomics(_FESX, FuturesPointValue(Decimal("10"), _EUR))
+_ES_POINT = FuturesPointValue(Decimal("50"), _USD)
+_ES_DEC_ECONOMICS = FuturesContractEconomics(_ES_DEC, _ES_POINT)
+_ES_MAR_ECONOMICS = FuturesContractEconomics(_ES_MAR, _ES_POINT)
+_FESX_DEC_ECONOMICS = FuturesContractEconomics(_FESX_DEC, FuturesPointValue(Decimal("10"), _EUR))
+# Historically plausible fixtures only: concurrent NIFTY expiries at lots of 75 and 65.
+_NIFTY = FuturesProductReference(Symbol("NIFTY"), ExchangeCode("NSE"))
+_NIFTY_NOV = FuturesContract(_NIFTY, ExpirationDate("2025-11-25"))
+_NIFTY_JAN = FuturesContract(_NIFTY, ExpirationDate("2026-01-27"))
+_NIFTY_NOV_ECONOMICS = FuturesContractEconomics(_NIFTY_NOV, FuturesPointValue(Decimal("75"), _INR))
+_NIFTY_JAN_ECONOMICS = FuturesContractEconomics(_NIFTY_JAN, FuturesPointValue(Decimal("65"), _INR))
 _PORTFOLIO = PaperPortfolioIdentity("futures-paper-1")
 _STRATEGY = StrategyIdentity("futures-forward")
 _DECIDED = PointInTime("2026-09-01T21:00:00Z")
@@ -114,7 +124,7 @@ def _sequence(
 
 def _pnl(
     fills: tuple[FuturesPaperFill, ...],
-    economics: tuple[FuturesProductEconomics, ...] = (_ES_ECONOMICS,),
+    economics: tuple[FuturesContractEconomics, ...] = (_ES_DEC_ECONOMICS, _ES_MAR_ECONOMICS),
     as_of: PointInTime = _AS_OF,
 ) -> tuple[FuturesContractRealizedPnl, ...]:
     return CalculateFuturesRealizedPnlUseCase().execute(
@@ -250,7 +260,7 @@ _PRECISE_POINT = Decimal("1.234567890123456789012345678901")
 
 @pytest.mark.parametrize("precision", [6, 50])
 def test_the_point_value_conversion_is_owned_by_the_explicit_context(precision: int) -> None:
-    economics = (FuturesProductEconomics(_ES, FuturesPointValue(_PRECISE_POINT, _USD)),)
+    economics = (FuturesContractEconomics(_ES_DEC, FuturesPointValue(_PRECISE_POINT, _USD)),)
     fills = _sequence((BUY, 1, "100"), (SELL, 1, "110"))
 
     with localcontext() as ambient:
@@ -267,7 +277,7 @@ def test_quote_points_accumulate_before_one_conversion() -> None:
     point = Decimal("3.333333333333333333333333337")
     first = Decimal("0.1428571428571428571428571429")
     second = Decimal("3.666666666666666666666666667")
-    economics = (FuturesProductEconomics(_ES, FuturesPointValue(point, _USD)),)
+    economics = (FuturesContractEconomics(_ES_DEC, FuturesPointValue(point, _USD)),)
     fills = _sequence(
         (BUY, 1, "100"),
         (SELL, 1, "100.1428571428571428571428571429"),
@@ -320,7 +330,7 @@ def test_signed_quotes_and_zero_crossings_are_linear(trades, expected: str) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_expiries_sharing_economics_are_separate_results() -> None:
+def test_expiries_with_equal_economics_are_separate_results() -> None:
     fills = (
         _fill("a", BUY, 2, "100", _at(2), contract=_ES_MAR),
         _fill("b", BUY, 1, "100", _at(3), contract=_ES_DEC),
@@ -334,6 +344,49 @@ def test_expiries_sharing_economics_are_separate_results() -> None:
     )
 
 
+def test_expiries_of_one_product_realize_at_their_own_point_values() -> None:
+    """INDIA-1: NIFTY NOV closes at 75 INR and JAN at 65 INR per point."""
+    fills = (
+        _fill("a", BUY, 2, "24000", _at(2), contract=_NIFTY_NOV),
+        _fill("b", SELL, 3, "24100", _at(3), contract=_NIFTY_JAN),
+        _fill("c", SELL, 2, "24010", _at(4), contract=_NIFTY_NOV),
+        _fill("d", BUY, 3, "24080", _at(5), contract=_NIFTY_JAN),
+    )
+
+    results = _pnl(fills, (_NIFTY_JAN_ECONOMICS, _NIFTY_NOV_ECONOMICS))
+
+    assert results == (
+        # (24010 - 24000) * 2 * 75
+        FuturesContractRealizedPnl(_NIFTY_NOV, Money(Decimal("1500"), _INR)),
+        # (24080 - 24100) * -1 * 3 * 65; at NOV's 75 it would be 4500
+        FuturesContractRealizedPnl(_NIFTY_JAN, Money(Decimal("3900"), _INR)),
+    )
+    assert {result.realized_pnl.currency for result in results} == {_INR}
+
+
+def test_one_expiry_never_realizes_at_another_expirys_point_value() -> None:
+    fills = (
+        _fill("a", BUY, 1, "24000", _at(2), contract=_NIFTY_NOV),
+        _fill("b", BUY, 1, "24000", _at(3), contract=_NIFTY_JAN),
+    )
+
+    with pytest.raises(
+        InvalidFuturesContractEconomicsInputError,
+        match="no contract economics for NIFTY@NSE 2026-01-27",
+    ):
+        _pnl(fills, (_NIFTY_NOV_ECONOMICS,))
+
+
+def test_another_markets_economics_never_realize_a_contract() -> None:
+    fills = (_fill("a", BUY, 1, "24000", _at(2), contract=_NIFTY_NOV),)
+
+    with pytest.raises(
+        InvalidFuturesContractEconomicsInputError,
+        match="no contract economics for NIFTY@NSE 2025-11-25",
+    ):
+        _pnl(fills, (_ES_DEC_ECONOMICS, _ES_MAR_ECONOMICS))
+
+
 def test_currencies_are_never_summed() -> None:
     fills = (
         _fill("a", BUY, 1, "100", _at(2)),
@@ -342,7 +395,7 @@ def test_currencies_are_never_summed() -> None:
         _fill("d", SELL, 1, "5020", _at(5), contract=_FESX_DEC),
     )
 
-    results = _pnl(fills, (_FESX_ECONOMICS, _ES_ECONOMICS))
+    results = _pnl(fills, (_FESX_DEC_ECONOMICS, _ES_DEC_ECONOMICS))
 
     assert results == (
         FuturesContractRealizedPnl(_ES_DEC, _usd("500")),
@@ -373,7 +426,7 @@ def test_an_as_of_before_every_fill_is_empty_and_needs_no_economics() -> None:
     assert _pnl(_sequence((BUY, 1, "100")), economics=(), as_of=_at(1)) == ()
 
 
-def test_a_product_only_filled_after_as_of_needs_no_economics() -> None:
+def test_a_contract_only_filled_after_as_of_needs_no_economics() -> None:
     fills = (
         _fill("a", BUY, 1, "100", _at(2)),
         _fill("b", BUY, 1, "5000", _at(9), contract=_FESX_DEC),
@@ -390,17 +443,28 @@ def test_a_product_only_filled_after_as_of_needs_no_economics() -> None:
 def test_missing_economics_for_a_visible_fill_fails() -> None:
     fills = (_fill("a", BUY, 1, "5000", _at(2), contract=_FESX_DEC),)
 
-    with pytest.raises(InvalidFuturesProductEconomicsInputError, match="no product economics"):
+    with pytest.raises(
+        InvalidFuturesContractEconomicsInputError,
+        match="no contract economics for FESX@EUREX 2026-12-18",
+    ):
         _pnl(fills)
 
 
 def test_duplicate_economics_are_rejected_even_when_equal() -> None:
-    with pytest.raises(InvalidFuturesProductEconomicsInputError, match="more than once"):
-        _pnl(_sequence((BUY, 1, "100")), economics=(_ES_ECONOMICS, _ES_ECONOMICS))
+    with pytest.raises(InvalidFuturesContractEconomicsInputError, match="more than once"):
+        _pnl(_sequence((BUY, 1, "100")), economics=(_ES_DEC_ECONOMICS, _ES_DEC_ECONOMICS))
+
+
+def test_expiries_of_one_product_are_not_duplicates() -> None:
+    fills = _sequence((BUY, 1, "24000"), contract=_NIFTY_NOV)
+
+    assert _pnl(fills, economics=(_NIFTY_NOV_ECONOMICS, _NIFTY_JAN_ECONOMICS)) == (
+        FuturesContractRealizedPnl(_NIFTY_NOV, Money(Decimal("0"), _INR)),
+    )
 
 
 def test_extra_economics_are_allowed() -> None:
-    assert _pnl(_sequence((BUY, 1, "100")), economics=(_FESX_ECONOMICS, _ES_ECONOMICS)) == (
+    assert _pnl(_sequence((BUY, 1, "100")), economics=(_FESX_DEC_ECONOMICS, _ES_DEC_ECONOMICS)) == (
         FuturesContractRealizedPnl(_ES_DEC, _usd("0")),
     )
 
@@ -470,13 +534,18 @@ def test_the_same_instant_order_identity_tie_break_is_load_bearing() -> None:
         (1, "s", "strategy identity must be a StrategyIdentity"),
         (2, [], "fills must be a tuple"),
         (2, ("fill",), "fills must contain FuturesPaperFill"),
-        (3, [_ES_ECONOMICS], "economics must be a tuple"),
-        (3, (_ES,), "economics must contain FuturesProductEconomics"),
+        (3, [_ES_DEC_ECONOMICS], "economics must be a tuple"),
+        (3, (_ES_DEC,), "economics must contain FuturesContractEconomics"),
+        (
+            3,
+            (FuturesProductEconomics(_ES, _ES_POINT),),
+            "economics must contain FuturesContractEconomics",
+        ),
         (4, "2026-10-30T21:00:00Z", "as-of instant must be a PointInTime"),
     ],
 )
 def test_inputs_are_type_checked(argument: int, value: object, message: str) -> None:
-    arguments: list[object] = [_PORTFOLIO, _STRATEGY, (), (_ES_ECONOMICS,), _AS_OF]
+    arguments: list[object] = [_PORTFOLIO, _STRATEGY, (), (_ES_DEC_ECONOMICS,), _AS_OF]
     arguments[argument] = value
 
     with pytest.raises(TypeError, match=message):
@@ -622,8 +691,9 @@ def test_the_public_surface_is_exported_without_helpers() -> None:
     for name in (
         "FuturesContractRealizedPnl",
         "CalculateFuturesRealizedPnlUseCase",
-        "InvalidFuturesProductEconomicsInputError",
+        "InvalidFuturesContractEconomicsInputError",
     ):
         assert name in services.__all__
+    assert "InvalidFuturesProductEconomicsInputError" not in services.__all__
     for private in ("_transition", "_validate_fill_history", "_PNL_CONTEXT", "_Transition"):
         assert not hasattr(services, private)

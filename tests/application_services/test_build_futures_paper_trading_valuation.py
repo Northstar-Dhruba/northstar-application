@@ -29,6 +29,7 @@ from northstar_core.foundation.value_objects import (
 )
 from northstar_core.futures import (
     FuturesContract,
+    FuturesContractEconomics,
     FuturesOHLCVBar,
     FuturesPointValue,
     FuturesProductEconomics,
@@ -50,13 +51,14 @@ from northstar_core.strategy import StrategyIdentity
 
 from northstar_application.application_services import (
     BuildFuturesPaperTradingValuationUseCase,
+    FuturesContractEconomicsContractViolationError,
+    FuturesContractEconomicsNotFoundError,
     FuturesContractPnl,
     FuturesPaperTradingContractViolationError,
     FuturesPaperTradingValuation,
-    FuturesProductEconomicsContractViolationError,
-    FuturesProductEconomicsNotFoundError,
 )
 from northstar_application.ports import (
+    FuturesContractEconomicsRepository,
     FuturesHistoricalMarketDataQuery,
     FuturesHistoricalMarketDataRepository,
     FuturesPaperFillQuery,
@@ -68,14 +70,23 @@ from northstar_application.ports import (
 
 _USD = Currency("USD")
 _EUR = Currency("EUR")
+_INR = Currency("INR")
 _DAILY = Timeframe("1d")
 _ES = FuturesProductReference(Symbol("ES"), ExchangeCode("CME"))
 _FESX = FuturesProductReference(Symbol("FESX"), ExchangeCode("EUREX"))
 _ES_DEC = FuturesContract(_ES, ExpirationDate("2026-12-18"))
 _ES_MAR = FuturesContract(_ES, ExpirationDate("2027-03-19"))
 _FESX_DEC = FuturesContract(_FESX, ExpirationDate("2026-12-18"))
-_ES_ECONOMICS = FuturesProductEconomics(_ES, FuturesPointValue(Decimal("50"), _USD))
-_FESX_ECONOMICS = FuturesProductEconomics(_FESX, FuturesPointValue(Decimal("10"), _EUR))
+_ES_POINT = FuturesPointValue(Decimal("50"), _USD)
+_ES_DEC_ECONOMICS = FuturesContractEconomics(_ES_DEC, _ES_POINT)
+_ES_MAR_ECONOMICS = FuturesContractEconomics(_ES_MAR, _ES_POINT)
+_FESX_DEC_ECONOMICS = FuturesContractEconomics(_FESX_DEC, FuturesPointValue(Decimal("10"), _EUR))
+# Historically plausible fixtures only: concurrent NIFTY expiries at lots of 75 and 65.
+_NIFTY = FuturesProductReference(Symbol("NIFTY"), ExchangeCode("NSE"))
+_NIFTY_NOV = FuturesContract(_NIFTY, ExpirationDate("2025-11-25"))
+_NIFTY_JAN = FuturesContract(_NIFTY, ExpirationDate("2026-01-27"))
+_NIFTY_NOV_ECONOMICS = FuturesContractEconomics(_NIFTY_NOV, FuturesPointValue(Decimal("75"), _INR))
+_NIFTY_JAN_ECONOMICS = FuturesContractEconomics(_NIFTY_JAN, FuturesPointValue(Decimal("65"), _INR))
 _PORTFOLIO = PaperPortfolioIdentity("futures-paper-1")
 _STRATEGY = StrategyIdentity("futures-forward")
 _OTHER_STRATEGY = StrategyIdentity("other-strategy")
@@ -99,6 +110,10 @@ def _usd(amount: str) -> Money:
 
 def _eur(amount: str) -> Money:
     return Money(Decimal(amount), _EUR)
+
+
+def _inr(amount: str) -> Money:
+    return Money(Decimal(amount), _INR)
 
 
 def _quote(value: str) -> QuoteValue:
@@ -158,14 +173,23 @@ class MarketRepository(FuturesHistoricalMarketDataRepository):
         )
 
 
-class EconomicsRepository(FuturesProductEconomicsRepository):
-    def __init__(self, *economics: FuturesProductEconomics) -> None:
-        self.economics = {entry.reference: entry for entry in economics}
-        self.calls: list[FuturesProductReference] = []
+class EconomicsRepository(FuturesContractEconomicsRepository):
+    """A conforming exact-contract lookup: no fallback to another expiry."""
+
+    def __init__(self, *economics: FuturesContractEconomics) -> None:
+        self.economics = {entry.contract: entry for entry in economics}
+        self.calls: list[FuturesContract] = []
+
+    def get_economics(self, contract: FuturesContract):
+        self.calls.append(contract)
+        return self.economics.get(contract)
+
+
+class ProductEconomicsRepository(FuturesProductEconomicsRepository):
+    """The retained product-level port, which P&L must never accept."""
 
     def get_economics(self, reference: FuturesProductReference):
-        self.calls.append(reference)
-        return self.economics.get(reference)
+        return FuturesProductEconomics(reference, _ES_POINT)
 
 
 class Raw:
@@ -180,7 +204,7 @@ class Raw:
     def get_fills(self, query):
         return self.output
 
-    def get_economics(self, reference):
+    def get_economics(self, contract):
         return self.output
 
 
@@ -192,7 +216,7 @@ class RawFills(Raw, FuturesPaperFillRepository):
     pass
 
 
-class RawEconomics(Raw, FuturesProductEconomicsRepository):
+class RawEconomics(Raw, FuturesContractEconomicsRepository):
     pass
 
 
@@ -215,11 +239,13 @@ def _intent(
 class World:
     """Stored paper history, market bars and economics for one portfolio."""
 
-    def __init__(self, *economics: FuturesProductEconomics) -> None:
+    def __init__(self, *economics: FuturesContractEconomics) -> None:
         self.orders: list[FuturesPaperOrder] = []
         self.fills: list[FuturesPaperFill] = []
         self.bars: list[FuturesOHLCVBar] = []
-        self.economics = EconomicsRepository(*(economics or (_ES_ECONOMICS, _FESX_ECONOMICS)))
+        self.economics = EconomicsRepository(
+            *(economics or (_ES_DEC_ECONOMICS, _ES_MAR_ECONOMICS, _FESX_DEC_ECONOMICS))
+        )
         self.market = MarketRepository(self.bars)
 
     def trade(
@@ -484,7 +510,7 @@ def test_currencies_are_kept_per_contract_and_never_summed() -> None:
         assert not hasattr(fesx, name)
 
 
-def test_expiries_share_economics_but_not_pnl() -> None:
+def test_each_expiry_resolves_its_own_economics_and_pnl() -> None:
     world = (
         World()
         .trade(BUY, 1, "100", 3, contract=_ES_DEC)
@@ -496,9 +522,67 @@ def test_expiries_share_economics_but_not_pnl() -> None:
     valuation = world.value()
 
     assert [row.unrealized_pnl for row in valuation.contracts] == [_usd("500"), _usd("-500")]
-    # One lookup for the realized side, one inside the unrealized service.
-    assert world.economics.calls == [_ES, _ES]
+    # Each contract once for the realized side, once inside the unrealized service.
+    assert world.economics.calls == [_ES_DEC, _ES_MAR, _ES_DEC, _ES_MAR]
     assert [query.contract for query in world.market.queries] == [_ES_DEC, _ES_MAR]
+
+
+def test_two_expiries_of_one_product_coexist_at_their_own_point_values() -> None:
+    """INDIA-1 primary acceptance: NIFTY NOV at 75 INR and JAN at 65 INR, one valuation."""
+    world = (
+        World(_NIFTY_NOV_ECONOMICS, _NIFTY_JAN_ECONOMICS)
+        # NOV: long 2 at 24000, reduce 1 at 24040, 1 left open.
+        .trade(BUY, 2, "24000", 3, contract=_NIFTY_NOV)
+        .trade(SELL, 1, "24040", 4, contract=_NIFTY_NOV)
+        # JAN: short 3 at 24100, cover 2 at 24080, 1 left open.
+        .trade(SELL, 3, "24100", 5, contract=_NIFTY_JAN)
+        .trade(BUY, 2, "24080", 6, contract=_NIFTY_JAN)
+        .bar(9, "24010", _NIFTY_NOV)
+        .bar(9, "24120", _NIFTY_JAN)
+    )
+
+    valuation = world.value()
+    nov, jan = _row(valuation, _NIFTY_NOV), _row(valuation, _NIFTY_JAN)
+
+    # NOV realized (24040 - 24000) * 1 * 75; unrealized (24010 - 24000) * 1 * 75.
+    assert (nov.realized_pnl, nov.unrealized_pnl) == (_inr("3000"), _inr("750"))
+    # JAN realized (24080 - 24100) * -1 * 2 * 65; unrealized (24120 - 24100) * -1 * 65.
+    # At NOV's 75 these would be 3000 and -1500.
+    assert (jan.realized_pnl, jan.unrealized_pnl) == (_inr("2600"), _inr("-1300"))
+    assert [row.contract for row in valuation.contracts] == [_NIFTY_NOV, _NIFTY_JAN]
+    assert {row.settlement_currency for row in valuation.contracts} == {_INR}
+    assert world.economics.calls == [_NIFTY_NOV, _NIFTY_JAN, _NIFTY_NOV, _NIFTY_JAN]
+    for name in ("total_pnl", "gross_pnl", "total_realized", "total_unrealized"):
+        assert not hasattr(valuation, name)
+
+
+def test_an_unconfigured_expiry_is_named_even_when_its_sibling_is_configured() -> None:
+    world = (
+        World(_NIFTY_NOV_ECONOMICS)
+        .trade(BUY, 1, "24000", 3, contract=_NIFTY_NOV)
+        .trade(BUY, 1, "24000", 4, contract=_NIFTY_JAN)
+    )
+
+    with pytest.raises(FuturesContractEconomicsNotFoundError, match="NIFTY@NSE 2026-01-27") as info:
+        world.value()
+
+    assert info.value.contract == _NIFTY_JAN
+
+
+def test_es_economics_never_value_a_nifty_contract() -> None:
+    world = World(_ES_DEC_ECONOMICS, _ES_MAR_ECONOMICS).trade(
+        BUY, 1, "24000", 3, contract=_NIFTY_NOV
+    )
+
+    with pytest.raises(FuturesContractEconomicsNotFoundError) as info:
+        world.value()
+
+    assert info.value.contract == _NIFTY_NOV
+
+
+def test_the_product_level_port_is_not_accepted() -> None:
+    with pytest.raises(TypeError, match="must be a FuturesContractEconomicsRepository"):
+        World().use_case(economics_repository=ProductEconomicsRepository())
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +591,7 @@ def test_expiries_share_economics_but_not_pnl() -> None:
 
 
 def test_a_future_fill_changes_nothing_and_needs_no_economics() -> None:
-    world = World(_ES_ECONOMICS).trade(BUY, 1, "100", 3).bar(9, "110")
+    world = World(_ES_DEC_ECONOMICS).trade(BUY, 1, "100", 3).bar(9, "110")
     before = world.value()
 
     world.trade(SELL, 1, "200", 11)
@@ -516,7 +600,7 @@ def test_a_future_fill_changes_nothing_and_needs_no_economics() -> None:
 
     assert after == before
     assert [row.contract for row in after.contracts] == [_ES_DEC]
-    assert _FESX not in world.economics.calls
+    assert _FESX_DEC not in world.economics.calls
 
 
 def test_a_future_bar_changes_nothing() -> None:
@@ -604,20 +688,22 @@ def test_a_fill_carrying_another_intent_is_rejected() -> None:
         world.value(fill_repository=RawFills((impostor,)))
 
 
-def test_missing_economics_for_a_visible_product_fails() -> None:
-    world = World(_ES_ECONOMICS).trade(BUY, 1, "5000", 3, contract=_FESX_DEC)
+def test_missing_economics_for_a_visible_contract_fails() -> None:
+    world = World(_ES_DEC_ECONOMICS).trade(BUY, 1, "5000", 3, contract=_FESX_DEC)
 
-    with pytest.raises(FuturesProductEconomicsNotFoundError, match="FESX@EUREX"):
+    with pytest.raises(FuturesContractEconomicsNotFoundError, match="FESX@EUREX 2026-12-18"):
         world.value()
 
 
 @pytest.mark.parametrize(
-    "output", ["economics", _FESX_ECONOMICS], ids=["wrong-type", "wrong-reference"]
+    "output",
+    ["economics", _FESX_DEC_ECONOMICS, _ES_MAR_ECONOMICS],
+    ids=["wrong-type", "wrong-product", "wrong-expiry"],
 )
 def test_a_misbehaving_economics_repository_fails(output) -> None:
     world = World().trade(BUY, 1, "100", 3)
 
-    with pytest.raises(FuturesProductEconomicsContractViolationError):
+    with pytest.raises(FuturesContractEconomicsContractViolationError):
         world.value(economics_repository=RawEconomics(output))
 
 
@@ -649,8 +735,8 @@ def test_dependencies_and_inputs_are_type_checked() -> None:
 @pytest.mark.parametrize("precision", [6, 28, 50])
 @pytest.mark.parametrize("rounding", [ROUND_DOWN, ROUND_CEILING, ROUND_HALF_UP])
 def test_the_valuation_ignores_the_callers_decimal_context(precision: int, rounding) -> None:
-    economics = FuturesProductEconomics(
-        _ES, FuturesPointValue(Decimal("12.34567890123456789012345678"), _USD)
+    economics = FuturesContractEconomics(
+        _ES_DEC, FuturesPointValue(Decimal("12.34567890123456789012345678"), _USD)
     )
 
     def build() -> FuturesPaperTradingValuation:

@@ -8,10 +8,15 @@ from northstar_core.futures import FuturesProductEconomics, FuturesProductRefere
 
 
 class FuturesProductEconomicsRepository(ABC):
-    """Retrieves the economics of one exchange-defined futures product.
+    """Retrieves historical product-level economics of one futures product.
 
-    Economics are product-level: every expiry of a product shares them, so the
-    lookup key is a FuturesProductReference, never a FuturesContract.
+    Historical reference only: this port reads the product-level economics of
+    the original ES reference MVP. It is never the profit and loss authority;
+    P&L resolves FuturesContractEconomicsRepository by the complete contract,
+    because expiries of one product can carry different point values. No P&L
+    use case accepts this port, and nothing may read it as a fallback.
+
+    The lookup key is a FuturesProductReference, never a FuturesContract.
 
     Implementations must return the economics whose ``reference`` equals the
     requested reference, or None when none are configured. They must never

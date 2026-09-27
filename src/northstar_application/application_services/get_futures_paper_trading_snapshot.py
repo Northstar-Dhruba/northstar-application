@@ -6,7 +6,7 @@ must not be confused:
 - the SELECTED CONTRACT (optional): its latest persisted daily bar and its
   most recent frozen research decisions for the portfolio's strategy;
 - the WHOLE PAPER PORTFOLIO: its visible orders and fills, pending orders, the
-  portfolio fold and, when product economics allow, its gross simulated
+  portfolio fold and, when contract economics allow, its gross simulated
   valuation. Other contracts held by the portfolio are always included.
 
 Everything is read from persisted facts through existing ports. Nothing is
@@ -19,9 +19,11 @@ its paper state is the order persisted for that decision, if any. No-action
 outcomes (HOLD, TARGET_ALREADY_MET) are not persisted, so a decision without an
 order is reported as having none -- never as a reason inferred from absence.
 
-Missing economics: valuation stops at the first visible product without
-economics. The snapshot then carries no valuation and names that one product;
-every other section is still returned. Integrity failures -- corrupt storage,
+Missing economics: valuation stops at the first visible contract without
+economics. The snapshot then carries no valuation and names that one dated
+contract -- product, exchange and expiration -- never just its product, since
+other expiries of the product may be configured; every other section is still
+returned. Integrity failures -- corrupt storage,
 malformed port output, a mixed-strategy portfolio -- propagate unchanged.
 """
 
@@ -30,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from northstar_core.foundation.value_objects import PointInTime, Timeframe
-from northstar_core.futures import FuturesContract, FuturesOHLCVBar, FuturesProductReference
+from northstar_core.futures import FuturesContract, FuturesOHLCVBar
 from northstar_core.paper_trading import (
     FuturesPaperFill,
     FuturesPaperOrder,
@@ -60,16 +62,16 @@ from northstar_application.application_services.run_futures_paper_trading_decisi
     _validate_forward_output,
 )
 from northstar_application.application_services.value_futures_paper_portfolio import (
-    FuturesProductEconomicsNotFoundError,
+    FuturesContractEconomicsNotFoundError,
 )
 from northstar_application.ports import (
+    FuturesContractEconomicsRepository,
     FuturesForwardResearchRecordQuery,
     FuturesForwardResearchRecordRepository,
     FuturesHistoricalMarketDataQuery,
     FuturesHistoricalMarketDataRepository,
     FuturesPaperFillRepository,
     FuturesPaperOrderRepository,
-    FuturesProductEconomicsRepository,
 )
 
 _DAILY = Timeframe("1d")
@@ -126,7 +128,8 @@ class FuturesPaperTradingSnapshot:
     requested; the market bar and decisions then stay empty. ``orders`` and
     ``fills`` are those visible at the cutoff. ``recent_decisions`` are newest
     first and bounded. Exactly one of ``valuation`` and ``missing_economics``
-    is present.
+    is present; ``missing_economics`` is the first visible contract without
+    contract economics.
     """
 
     contract: FuturesContract | None
@@ -136,7 +139,7 @@ class FuturesPaperTradingSnapshot:
     orders: tuple[FuturesPaperOrder, ...]
     fills: tuple[FuturesPaperFill, ...]
     valuation: FuturesPaperTradingValuation | None
-    missing_economics: FuturesProductReference | None
+    missing_economics: FuturesContract | None
 
     def __post_init__(self) -> None:
         self._validate_types()
@@ -190,11 +193,9 @@ class FuturesPaperTradingSnapshot:
         ):
             raise TypeError(f"{subject} valuation must be a FuturesPaperTradingValuation or None.")
         if self.missing_economics is not None and not isinstance(
-            self.missing_economics, FuturesProductReference
+            self.missing_economics, FuturesContract
         ):
-            raise TypeError(
-                f"{subject} missing economics must be a FuturesProductReference or None."
-            )
+            raise TypeError(f"{subject} missing economics must be a FuturesContract or None.")
 
     def _validate_selected_contract(self) -> None:
         subject = "FuturesPaperTradingSnapshot"
@@ -256,7 +257,7 @@ class FuturesPaperTradingSnapshot:
         subject = "FuturesPaperTradingSnapshot"
         if (self.valuation is None) == (self.missing_economics is None):
             raise ValueError(
-                f"{subject} carries a valuation or the missing product economics, not both."
+                f"{subject} carries a valuation or the missing contract economics, not both."
             )
         if self.valuation is not None and self.valuation.portfolio != self.portfolio:
             raise ValueError(f"{subject} valuation must value the snapshot portfolio.")
@@ -271,14 +272,14 @@ class GetFuturesPaperTradingSnapshotUseCase:
         forward_repository: FuturesForwardResearchRecordRepository,
         order_repository: FuturesPaperOrderRepository,
         fill_repository: FuturesPaperFillRepository,
-        economics_repository: FuturesProductEconomicsRepository,
+        economics_repository: FuturesContractEconomicsRepository,
     ) -> None:
         for name, value, expected in (
             ("market_repository", market_repository, FuturesHistoricalMarketDataRepository),
             ("forward_repository", forward_repository, FuturesForwardResearchRecordRepository),
             ("order_repository", order_repository, FuturesPaperOrderRepository),
             ("fill_repository", fill_repository, FuturesPaperFillRepository),
-            ("economics_repository", economics_repository, FuturesProductEconomicsRepository),
+            ("economics_repository", economics_repository, FuturesContractEconomicsRepository),
         ):
             if not isinstance(value, expected):
                 raise TypeError(f"{_SUBJECT} {name} must be a {expected.__name__}.")
@@ -330,8 +331,8 @@ class GetFuturesPaperTradingSnapshotUseCase:
                 portfolio_identity, strategy_identity, available_through
             )
             missing = None
-        except FuturesProductEconomicsNotFoundError as error:
-            valuation, missing = None, error.reference
+        except FuturesContractEconomicsNotFoundError as error:
+            valuation, missing = None, error.contract
 
         bar, decisions = None, ()
         if contract is not None:

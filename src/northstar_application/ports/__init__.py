@@ -9,6 +9,13 @@ from northstar_application.ports.forward_research_record_store import (
     ForwardResearchRecordConflictError,
     ForwardResearchRecordStore,
 )
+from northstar_application.ports.futures_contract_economics_repository import (
+    FuturesContractEconomicsRepository,
+)
+from northstar_application.ports.futures_contract_economics_store import (
+    FuturesContractEconomicsConflictError,
+    FuturesContractEconomicsStore,
+)
 from northstar_application.ports.futures_forward_research_record_repository import (
     FuturesForwardResearchRecordQuery,
     FuturesForwardResearchRecordRepository,
@@ -88,6 +95,9 @@ from northstar_application.ports.trading_session_resolver import (
 
 __all__ = [
     "ForwardResearchRecordConflictError",
+    "FuturesContractEconomicsConflictError",
+    "FuturesContractEconomicsRepository",
+    "FuturesContractEconomicsStore",
     "FuturesDailyHistoricalAcquisitionQuery",
     "FuturesForwardResearchRecordConflictError",
     "FuturesForwardResearchRecordQuery",
