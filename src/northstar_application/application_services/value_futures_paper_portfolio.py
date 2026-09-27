@@ -11,13 +11,17 @@ For signed net contracts ``n`` held at average entry ``a`` and mark ``m``:
 
     unrealized = (m - a) * n * point_value.amount    in point_value.currency
 
+The point value is the position's own contract's: economics are resolved by the
+complete FuturesContract, never by its product, so an expiry can never be valued
+with another expiry's point value.
+
 One signed formula serves long and short, and it is linear through zero, so
 negative and zero quotes need nothing special. Arithmetic is Decimal-only under
 one explicit context; Money is constructed from the finished amount and its own
 operators, which observe the caller's context, are never used.
 
 A position with no stored bar at or before the cutoff is reported unavailable,
-never valued at zero. Missing product economics are an error: a partially
+never valued at zero. Missing contract economics are an error: a partially
 valued portfolio must not look complete. Nothing is persisted and no clock is
 read.
 """
@@ -29,21 +33,16 @@ from decimal import ROUND_HALF_EVEN, Context, localcontext
 
 from northstar_core.derivatives import QuoteValue
 from northstar_core.foundation.value_objects import Currency, Money, PointInTime, Timeframe
-from northstar_core.futures import (
-    FuturesContract,
-    FuturesOHLCVBar,
-    FuturesProductEconomics,
-    FuturesProductReference,
-)
+from northstar_core.futures import FuturesContract, FuturesContractEconomics, FuturesOHLCVBar
 from northstar_core.paper_trading import FuturesPaperPortfolio, FuturesPosition
 
 from northstar_application.application_services._futures_repository_output import (
     validate_futures_repository_bars,
 )
 from northstar_application.ports import (
+    FuturesContractEconomicsRepository,
     FuturesHistoricalMarketDataQuery,
     FuturesHistoricalMarketDataRepository,
-    FuturesProductEconomicsRepository,
 )
 
 _DAILY = Timeframe("1d")
@@ -51,40 +50,42 @@ _PNL_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 _SUBJECT = "ValueFuturesPaperPortfolioUseCase"
 
 
-class FuturesProductEconomicsNotFoundError(ValueError):
-    """Raised when a product that must be valued has no configured economics.
+class FuturesContractEconomicsNotFoundError(ValueError):
+    """Raised when a contract that must be valued has no configured economics.
 
-    ``reference`` names the product, so callers never parse the message.
+    ``contract`` names the complete dated contract -- product, exchange and
+    expiration -- so callers never parse the message, and a missing expiry is
+    never mistaken for a whole product without economics.
     """
 
-    def __init__(self, message: str, reference: FuturesProductReference | None = None) -> None:
+    def __init__(self, message: str, contract: FuturesContract | None = None) -> None:
         super().__init__(message)
-        self.reference = reference
+        self.contract = contract
 
 
-class FuturesProductEconomicsContractViolationError(ValueError):
-    """Raised when a FuturesProductEconomicsRepository violates its contract."""
+class FuturesContractEconomicsContractViolationError(ValueError):
+    """Raised when a FuturesContractEconomicsRepository violates its contract."""
 
 
 def _economics_for(
     subject: str,
-    repository: FuturesProductEconomicsRepository,
-    reference: FuturesProductReference,
-) -> FuturesProductEconomics:
-    """Look up one product's economics, failing on a missing or foreign answer."""
-    found = repository.get_economics(reference)
+    repository: FuturesContractEconomicsRepository,
+    contract: FuturesContract,
+) -> FuturesContractEconomics:
+    """Look up one contract's economics, failing on a missing or foreign answer."""
+    found = repository.get_economics(contract)
     if found is None:
-        raise FuturesProductEconomicsNotFoundError(
-            f"{subject} has no product economics for {reference}.", reference
+        raise FuturesContractEconomicsNotFoundError(
+            f"{subject} has no contract economics for {contract}.", contract
         )
-    if not isinstance(found, FuturesProductEconomics):
-        raise FuturesProductEconomicsContractViolationError(
-            "FuturesProductEconomicsRepository must return FuturesProductEconomics or None."
+    if not isinstance(found, FuturesContractEconomics):
+        raise FuturesContractEconomicsContractViolationError(
+            "FuturesContractEconomicsRepository must return FuturesContractEconomics or None."
         )
-    if found.reference != reference:
-        raise FuturesProductEconomicsContractViolationError(
-            f"FuturesProductEconomicsRepository returned economics for {found.reference} "
-            f"when asked for {reference}."
+    if found.contract != contract:
+        raise FuturesContractEconomicsContractViolationError(
+            f"FuturesContractEconomicsRepository returned economics for {found.contract} "
+            f"when asked for {contract}."
         )
     return found
 
@@ -148,15 +149,15 @@ class ValueFuturesPaperPortfolioUseCase:
     def __init__(
         self,
         market_repository: FuturesHistoricalMarketDataRepository,
-        economics_repository: FuturesProductEconomicsRepository,
+        economics_repository: FuturesContractEconomicsRepository,
     ) -> None:
         if not isinstance(market_repository, FuturesHistoricalMarketDataRepository):
             raise TypeError(
                 f"{_SUBJECT} market_repository must be a FuturesHistoricalMarketDataRepository."
             )
-        if not isinstance(economics_repository, FuturesProductEconomicsRepository):
+        if not isinstance(economics_repository, FuturesContractEconomicsRepository):
             raise TypeError(
-                f"{_SUBJECT} economics_repository must be a FuturesProductEconomicsRepository."
+                f"{_SUBJECT} economics_repository must be a FuturesContractEconomicsRepository."
             )
         self._market_repository = market_repository
         self._economics_repository = economics_repository
@@ -175,22 +176,24 @@ class ValueFuturesPaperPortfolioUseCase:
                 f"available through {available_through}."
             )
 
-        # Resolve every product first so missing economics fail before any mark is read.
-        economics: dict[FuturesProductReference, FuturesProductEconomics] = {}
-        for position in portfolio.positions:
-            product = position.contract.product
-            if product not in economics:
-                economics[product] = _economics_for(_SUBJECT, self._economics_repository, product)
+        # Resolve every contract first so missing economics fail before any mark is read.
+        # Positions are unique per contract, so each contract is looked up once.
+        economics = {
+            position.contract: _economics_for(
+                _SUBJECT, self._economics_repository, position.contract
+            )
+            for position in portfolio.positions
+        }
 
         return tuple(
-            self._value(position, economics[position.contract.product], available_through)
+            self._value(position, economics[position.contract], available_through)
             for position in portfolio.positions
         )
 
     def _value(
         self,
         position: FuturesPosition,
-        economics: FuturesProductEconomics,
+        economics: FuturesContractEconomics,
         available_through: PointInTime,
     ) -> FuturesContractUnrealizedPnl:
         point_value = economics.point_value

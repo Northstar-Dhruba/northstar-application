@@ -21,8 +21,8 @@ from northstar_core.foundation.value_objects import (
 )
 from northstar_core.futures import (
     FuturesContract,
+    FuturesContractEconomics,
     FuturesOHLCVBar,
-    FuturesProductEconomics,
     FuturesProductReference,
 )
 from northstar_core.paper_trading import (
@@ -52,6 +52,8 @@ from northstar_application.application_services import (
     RunFuturesPaperTradingSessionUseCase,
 )
 from northstar_application.ports import (
+    FuturesContractEconomicsConflictError,
+    FuturesContractEconomicsStore,
     FuturesForwardResearchRecordConflictError,
     FuturesForwardResearchRecordQuery,
     FuturesForwardResearchRecordRepository,
@@ -66,7 +68,6 @@ from northstar_application.ports import (
     FuturesPaperOrderQuery,
     FuturesPaperOrderRepository,
     FuturesPaperOrderStore,
-    FuturesProductEconomicsConflictError,
     FuturesProductEconomicsStore,
 )
 
@@ -562,32 +563,37 @@ def test_result_types_and_report_pairing_are_checked() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_economics_store_port_is_an_abstract_product_level_batch_store() -> None:
+def test_the_economics_store_port_is_an_abstract_contract_level_batch_store() -> None:
     with pytest.raises(TypeError):
-        FuturesProductEconomicsStore()
-    public = [name for name in vars(FuturesProductEconomicsStore) if not name.startswith("_")]
-    signature = inspect.signature(FuturesProductEconomicsStore.store)
+        FuturesContractEconomicsStore()
+    public = [name for name in vars(FuturesContractEconomicsStore) if not name.startswith("_")]
+    signature = inspect.signature(FuturesContractEconomicsStore.store)
 
     assert public == ["store"]
     assert list(signature.parameters) == ["self", "economics"]
-    assert "FuturesProductEconomics" in str(signature.parameters["economics"].annotation)
-    assert "Contract" not in str(signature.parameters["economics"].annotation)
+    assert "FuturesContractEconomics" in str(signature.parameters["economics"].annotation)
+    assert "Product" not in str(signature.parameters["economics"].annotation)
     assert signature.return_annotation in (int, "int")
 
 
 def test_a_conforming_economics_store_can_be_implemented() -> None:
-    class Store(FuturesProductEconomicsStore):
-        def store(self, economics: tuple[FuturesProductEconomics, ...]) -> int:
+    class Store(FuturesContractEconomicsStore):
+        def store(self, economics: tuple[FuturesContractEconomics, ...]) -> int:
             return len(economics)
 
     assert Store().store(()) == 0
 
 
 def test_the_economics_conflict_error_lives_with_the_port() -> None:
-    import northstar_application.ports.futures_product_economics_store as port_module
+    import northstar_application.ports.futures_contract_economics_store as port_module
 
-    assert issubclass(FuturesProductEconomicsConflictError, ValueError)
-    assert FuturesProductEconomicsConflictError.__module__ == port_module.__name__
+    assert issubclass(FuturesContractEconomicsConflictError, ValueError)
+    assert FuturesContractEconomicsConflictError.__module__ == port_module.__name__
+
+
+def test_the_product_level_store_is_retained_only_for_historical_reference() -> None:
+    assert "Historical reference only" in (FuturesProductEconomicsStore.__doc__ or "")
+    assert not issubclass(FuturesProductEconomicsStore, FuturesContractEconomicsStore)
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +638,7 @@ def test_the_session_neither_acquires_nor_values() -> None:
         "FuturesHistoricalMarketDataSource",
         "BuildFuturesPaperTradingValuationUseCase",
         "FuturesProductEconomicsRepository",
+        "FuturesContractEconomicsRepository",
         "CalculateFuturesPaperTradingMetricsUseCase",
     ):
         assert forbidden not in names
@@ -647,5 +654,5 @@ def test_the_public_surface_is_exported() -> None:
         "FuturesPaperPortfolioStrategyConflictError",
     ):
         assert name in services.__all__
-    for name in ("FuturesProductEconomicsStore", "FuturesProductEconomicsConflictError"):
+    for name in ("FuturesContractEconomicsStore", "FuturesContractEconomicsConflictError"):
         assert name in ports.__all__

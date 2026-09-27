@@ -26,7 +26,7 @@ from decimal import Decimal
 
 from northstar_core.derivatives import QuoteValue
 from northstar_core.foundation.value_objects import Currency, Money, PointInTime
-from northstar_core.futures import FuturesContract, FuturesProductEconomics, FuturesProductReference
+from northstar_core.futures import FuturesContract, FuturesContractEconomics
 from northstar_core.paper_trading import (
     FuturesPaperPortfolio,
     FuturesPosition,
@@ -50,10 +50,10 @@ from northstar_application.application_services.value_futures_paper_portfolio im
     _economics_for,
 )
 from northstar_application.ports import (
+    FuturesContractEconomicsRepository,
     FuturesHistoricalMarketDataRepository,
     FuturesPaperFillRepository,
     FuturesPaperOrderRepository,
-    FuturesProductEconomicsRepository,
 )
 
 _SUBJECT = "BuildFuturesPaperTradingValuationUseCase"
@@ -232,13 +232,13 @@ class BuildFuturesPaperTradingValuationUseCase:
         order_repository: FuturesPaperOrderRepository,
         fill_repository: FuturesPaperFillRepository,
         market_repository: FuturesHistoricalMarketDataRepository,
-        economics_repository: FuturesProductEconomicsRepository,
+        economics_repository: FuturesContractEconomicsRepository,
     ) -> None:
         for name, value, expected in (
             ("order_repository", order_repository, FuturesPaperOrderRepository),
             ("fill_repository", fill_repository, FuturesPaperFillRepository),
             ("market_repository", market_repository, FuturesHistoricalMarketDataRepository),
-            ("economics_repository", economics_repository, FuturesProductEconomicsRepository),
+            ("economics_repository", economics_repository, FuturesContractEconomicsRepository),
         ):
             if not isinstance(value, expected):
                 raise TypeError(f"{_SUBJECT} {name} must be a {expected.__name__}.")
@@ -272,12 +272,13 @@ class BuildFuturesPaperTradingValuationUseCase:
             portfolio_identity, strategy_identity, fills, available_through
         )
 
-        # Only products with a visible fill need economics; a future-only product does not.
-        economics: dict[FuturesProductReference, FuturesProductEconomics] = {}
+        # Only contracts with a visible fill need economics; a future-only contract does not.
+        # Each is resolved by its complete contract, never by product or another expiry.
+        economics: dict[FuturesContract, FuturesContractEconomics] = {}
         for fill in fills:
-            product = fill.contract.product
-            if fill.filled_at.compare(available_through) <= 0 and product not in economics:
-                economics[product] = _economics_for(_SUBJECT, self._economics_repository, product)
+            contract = fill.contract
+            if fill.filled_at.compare(available_through) <= 0 and contract not in economics:
+                economics[contract] = _economics_for(_SUBJECT, self._economics_repository, contract)
 
         realized = self._realize.execute(
             portfolio_identity,
