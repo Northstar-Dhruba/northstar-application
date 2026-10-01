@@ -5,6 +5,10 @@ from northstar_application.application_services.acquire_futures_daily_history im
     FuturesDailyAcquisitionResult,
     FuturesHistoricalDataContractViolationError,
 )
+from northstar_application.application_services.acquire_futures_native_daily_history import (
+    AcquireFuturesNativeDailyHistoryUseCase,
+    FuturesDailySessionCoverageError,
+)
 from northstar_application.application_services.aggregate_futures_daily_session_bar import (
     AggregateFuturesDailySessionBarUseCase,
     InvalidFuturesSessionAggregationError,
@@ -265,6 +269,8 @@ __all__ = [
     "BuildPaperTradingReportUseCase",
     "PaperTradingReport",
     "AcquireFuturesDailyHistoryUseCase",
+    "AcquireFuturesNativeDailyHistoryUseCase",
+    "FuturesDailySessionCoverageError",
     "AggregateFuturesDailySessionBarUseCase",
     "BuildPaperPortfolioUseCase",
     "FuturesDailyAcquisitionResult",

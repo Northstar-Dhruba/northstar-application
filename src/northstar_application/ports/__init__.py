@@ -39,6 +39,11 @@ from northstar_application.ports.futures_historical_market_data_store import (
     FuturesHistoricalMarketDataConflictError,
     FuturesHistoricalMarketDataStore,
 )
+from northstar_application.ports.futures_native_daily_market_data_source import (
+    FuturesNativeDailyMarketDataSource,
+    FuturesNativeDailyObservation,
+    InvalidFuturesNativeDailyObservationError,
+)
 from northstar_application.ports.futures_paper_fill_repository import (
     FuturesPaperFillQuery,
     FuturesPaperFillRepository,
@@ -109,6 +114,9 @@ __all__ = [
     "FuturesHistoricalMarketDataRepository",
     "FuturesHistoricalMarketDataSource",
     "FuturesHistoricalMarketDataStore",
+    "FuturesNativeDailyMarketDataSource",
+    "FuturesNativeDailyObservation",
+    "InvalidFuturesNativeDailyObservationError",
     "FuturesPaperFillConflictError",
     "FuturesPaperFillQuery",
     "FuturesPaperFillRepository",
