@@ -42,6 +42,7 @@ _COUNT_FIELDS = (
     "pending_order_count",
     "contracts_bought",
     "contracts_sold",
+    "expiry_window_count",
 )
 
 
@@ -49,10 +50,15 @@ _COUNT_FIELDS = (
 class FuturesPaperTradingStrategyContractMetrics:
     """What one strategy's decisions executed on one concrete futures contract.
 
-    Every decision is exactly one of a hold, a target already met, or an order,
-    and every order is exactly one of filled or pending at the run cutoff.
-    ``current_net_contracts`` is the signed exposure in the run's final
-    portfolio, zero when flat.
+    Every decision is exactly one of a hold, a target already met, an
+    expiry-window non-action, or an order, and every order is exactly one of
+    filled or pending at the run cutoff. ``current_net_contracts`` is the signed
+    exposure in the run's final portfolio, zero when flat.
+
+    ``expiry_window_count`` counts decisions the pre-expiry guard governed while
+    the portfolio was already flat. An expiry flatten that closes a position is
+    an order and counts there. It defaults to zero, which is every run without
+    a guard.
     """
 
     contract: FuturesContract
@@ -66,6 +72,7 @@ class FuturesPaperTradingStrategyContractMetrics:
     contracts_bought: int
     contracts_sold: int
     current_net_contracts: int
+    expiry_window_count: int = 0
 
     def __post_init__(self) -> None:
         subject = "FuturesPaperTradingStrategyContractMetrics"
@@ -84,10 +91,14 @@ class FuturesPaperTradingStrategyContractMetrics:
         if self.order_count != self.filled_order_count + self.pending_order_count:
             raise ValueError(f"{subject} orders must be exactly filled or pending.")
         if self.decision_count != (
-            self.hold_count + self.target_already_met_count + self.order_count
+            self.hold_count
+            + self.target_already_met_count
+            + self.expiry_window_count
+            + self.order_count
         ):
             raise ValueError(
-                f"{subject} decisions must be exactly holds, targets already met, or orders."
+                f"{subject} decisions must be exactly holds, targets already met, "
+                "expiry-window non-actions, or orders."
             )
 
 
@@ -136,4 +147,7 @@ class CalculateFuturesPaperTradingMetricsUseCase:
             contracts_bought=sum(f.contracts.value for f in fills if f.side is OrderSide.BUY),
             contracts_sold=sum(f.contracts.value for f in fills if f.side is OrderSide.SELL),
             current_net_contracts=0 if position is None else position.net_contracts,
+            expiry_window_count=reasons.count(
+                FuturesExecutionIntentNoIntentReason.EXPIRY_FLATTEN_WINDOW
+            ),
         )
