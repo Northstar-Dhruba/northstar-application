@@ -25,8 +25,11 @@ accepted because a run is re-derived rather than persisted:
   decision conflict (FuturesPaperFillConflictError), exactly as it would when
   run on its own.
 
-The run reads no clock, touches no provider or calendar, and calculates no
-profit and loss.
+An optional FuturesExpiryFlattenGuard is handed to that decision use case
+unchanged, so every replayed decision is assessed against its own instant.
+
+The run reads no clock, touches no provider, consults a trading calendar only
+through that optional guard, and calculates no profit and loss.
 """
 
 from __future__ import annotations
@@ -45,6 +48,9 @@ from northstar_core.strategy import StrategyIdentity
 
 from northstar_application.application_services.build_futures_paper_portfolio import (
     BuildFuturesPaperPortfolioUseCase,
+)
+from northstar_application.application_services.futures_expiry_flatten_guard import (
+    FuturesExpiryFlattenGuard,
 )
 from northstar_application.application_services.run_futures_paper_trading_decision import (
     FuturesPaperTradingDecisionResult,
@@ -184,6 +190,7 @@ class RunFuturesPaperTradingUseCase:
         order_repository: FuturesPaperOrderRepository,
         fill_store: FuturesPaperFillStore,
         fill_repository: FuturesPaperFillRepository,
+        expiry_guard: FuturesExpiryFlattenGuard | None = None,
     ) -> None:
         for name, value, expected in (
             ("forward_repository", forward_repository, FuturesForwardResearchRecordRepository),
@@ -197,6 +204,11 @@ class RunFuturesPaperTradingUseCase:
                 raise TypeError(
                     f"RunFuturesPaperTradingUseCase {name} must be a {expected.__name__}."
                 )
+        if expiry_guard is not None and not isinstance(expiry_guard, FuturesExpiryFlattenGuard):
+            raise TypeError(
+                "RunFuturesPaperTradingUseCase expiry_guard must be a "
+                "FuturesExpiryFlattenGuard or None."
+            )
 
         self._forward_repository = forward_repository
         self._order_repository = order_repository
@@ -208,6 +220,7 @@ class RunFuturesPaperTradingUseCase:
             order_repository=order_repository,
             fill_store=fill_store,
             fill_repository=fill_repository,
+            expiry_guard=expiry_guard,
         )
         self._build_portfolio = BuildFuturesPaperPortfolioUseCase()
 
