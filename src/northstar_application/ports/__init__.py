@@ -16,6 +16,12 @@ from northstar_application.ports.futures_contract_economics_store import (
     FuturesContractEconomicsConflictError,
     FuturesContractEconomicsStore,
 )
+from northstar_application.ports.futures_daily_bar_finality_policy import (
+    FuturesDailyBarFinality,
+    FuturesDailyBarFinalityOutcome,
+    FuturesDailyBarFinalityPolicy,
+    InvalidFuturesDailyBarFinalityError,
+)
 from northstar_application.ports.futures_forward_research_record_repository import (
     FuturesForwardResearchRecordQuery,
     FuturesForwardResearchRecordRepository,
@@ -103,7 +109,11 @@ __all__ = [
     "FuturesContractEconomicsConflictError",
     "FuturesContractEconomicsRepository",
     "FuturesContractEconomicsStore",
+    "FuturesDailyBarFinality",
+    "FuturesDailyBarFinalityPolicy",
+    "FuturesDailyBarFinalityOutcome",
     "FuturesDailyHistoricalAcquisitionQuery",
+    "InvalidFuturesDailyBarFinalityError",
     "FuturesForwardResearchRecordConflictError",
     "FuturesForwardResearchRecordQuery",
     "FuturesForwardResearchRecordRepository",
