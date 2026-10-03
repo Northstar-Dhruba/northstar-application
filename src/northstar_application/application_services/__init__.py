@@ -69,6 +69,11 @@ from northstar_application.application_services.calculate_forward_research_metri
     CalculateForwardResearchMetricsUseCase,
     ForwardResearchStrategyHorizonMetrics,
 )
+from northstar_application.application_services.calculate_futures_analysis import (
+    CalculateFuturesAnalysisUseCase,
+    FuturesAnalysis,
+    FuturesResearchActionMetrics,
+)
 from northstar_application.application_services.calculate_futures_forward_metrics import (
     CalculateFuturesForwardResearchMetricsUseCase,
     FuturesForwardResearchStrategyHorizonMetrics,
@@ -362,6 +367,9 @@ __all__ = [
     "FuturesPaperTradeDirection",
     "FuturesPaperProfitFactorUnavailableReason",
     "CalculateFuturesPaperPerformanceUseCase",
+    "FuturesAnalysis",
+    "FuturesResearchActionMetrics",
+    "CalculateFuturesAnalysisUseCase",
     "FuturesPaperTradingReport",
     "BuildFuturesPaperTradingReportUseCase",
     "BuildFuturesPaperTradingValuationUseCase",
