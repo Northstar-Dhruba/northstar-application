@@ -381,10 +381,11 @@ def test_inputs_are_validated(
 # ---------------------------------------------------------------------------
 
 
-def test_the_no_intent_vocabulary_is_exactly_hold_and_target_already_met() -> None:
+def test_the_no_intent_vocabulary_is_exactly_hold_target_met_and_expiry_window() -> None:
     assert [reason.value for reason in FuturesExecutionIntentNoIntentReason] == [
         "HOLD",
         "TARGET_ALREADY_MET",
+        "EXPIRY_FLATTEN_WINDOW",
     ]
     assert "INSUFFICIENT_POSITION" not in FuturesExecutionIntentNoIntentReason.__members__
 

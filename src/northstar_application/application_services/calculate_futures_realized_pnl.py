@@ -1,7 +1,7 @@
 """Application derivation of gross realized futures profit and loss.
 
-Realized P&L is reconstructed from immutable fills and product economics; it is
-never stored. Each concrete contract is replayed through the same private
+Realized P&L is reconstructed from immutable fills and contract economics; it
+is never stored. Each concrete contract is replayed through the same private
 transition the portfolio fold uses, so a position's basis here is exactly the
 basis the portfolio reports -- including its 28-digit rounded weighted average.
 There is no hidden exact cost basis and no lot tracking.
@@ -20,6 +20,10 @@ Each contract accumulates quote points, then converts once:
 
     realized = total quote points * point_value.amount    in point_value.currency
 
+The point value is the contract's own: economics are resolved by the complete
+FuturesContract, never by its product, so one expiry's points are never
+converted at another expiry's point value.
+
 All arithmetic runs on Decimals under one explicit context, and Money is only
 constructed from the finished amount: Money's own operators observe the
 caller's context and are never used here.
@@ -34,7 +38,7 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 
 from northstar_core.foundation.value_objects import Money, PointInTime
-from northstar_core.futures import FuturesContract, FuturesProductEconomics, FuturesProductReference
+from northstar_core.futures import FuturesContract, FuturesContractEconomics
 from northstar_core.paper_trading import (
     FuturesPaperFill,
     FuturesPosition,
@@ -51,8 +55,8 @@ _PNL_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 _SUBJECT = "CalculateFuturesRealizedPnlUseCase"
 
 
-class InvalidFuturesProductEconomicsInputError(ValueError):
-    """Raised when supplied product economics are duplicated or missing for a fill."""
+class InvalidFuturesContractEconomicsInputError(ValueError):
+    """Raised when supplied contract economics are duplicated or missing for a fill."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +90,7 @@ class CalculateFuturesRealizedPnlUseCase:
         portfolio_identity: PaperPortfolioIdentity,
         strategy_identity: StrategyIdentity,
         fills: tuple[FuturesPaperFill, ...],
-        economics: tuple[FuturesProductEconomics, ...],
+        economics: tuple[FuturesContractEconomics, ...],
         as_of: PointInTime,
     ) -> tuple[FuturesContractRealizedPnl, ...]:
         """Return one realized result per contract with a fill visible at ``as_of``."""
@@ -99,9 +103,9 @@ class CalculateFuturesRealizedPnlUseCase:
         for fill in fills:
             if fill.filled_at.compare(as_of) > 0:
                 continue
-            if fill.contract.product not in lookup:
-                raise InvalidFuturesProductEconomicsInputError(
-                    f"{_SUBJECT} has no product economics for {fill.contract.product}."
+            if fill.contract not in lookup:
+                raise InvalidFuturesContractEconomicsInputError(
+                    f"{_SUBJECT} has no contract economics for {fill.contract}."
                 )
 
             prior = held.get(fill.contract)
@@ -123,7 +127,7 @@ class CalculateFuturesRealizedPnlUseCase:
 
         results: list[FuturesContractRealizedPnl] = []
         for contract in sorted(points, key=lambda item: item.natural_key):
-            point_value = lookup[contract.product].point_value
+            point_value = lookup[contract].point_value
             with localcontext(_PNL_CONTEXT):
                 amount = points[contract] * point_value.amount
             results.append(
@@ -133,15 +137,15 @@ class CalculateFuturesRealizedPnlUseCase:
 
     @staticmethod
     def _economics_lookup(
-        economics: tuple[FuturesProductEconomics, ...],
-    ) -> dict[FuturesProductReference, FuturesProductEconomics]:
-        lookup: dict[FuturesProductReference, FuturesProductEconomics] = {}
+        economics: tuple[FuturesContractEconomics, ...],
+    ) -> dict[FuturesContract, FuturesContractEconomics]:
+        lookup: dict[FuturesContract, FuturesContractEconomics] = {}
         for entry in economics:
-            if entry.reference in lookup:
-                raise InvalidFuturesProductEconomicsInputError(
-                    f"{_SUBJECT} economics contain {entry.reference} more than once."
+            if entry.contract in lookup:
+                raise InvalidFuturesContractEconomicsInputError(
+                    f"{_SUBJECT} economics contain {entry.contract} more than once."
                 )
-            lookup[entry.reference] = entry
+            lookup[entry.contract] = entry
         return lookup
 
     @staticmethod
@@ -149,7 +153,7 @@ class CalculateFuturesRealizedPnlUseCase:
         portfolio_identity: PaperPortfolioIdentity,
         strategy_identity: StrategyIdentity,
         fills: tuple[FuturesPaperFill, ...],
-        economics: tuple[FuturesProductEconomics, ...],
+        economics: tuple[FuturesContractEconomics, ...],
         as_of: PointInTime,
     ) -> None:
         if not isinstance(portfolio_identity, PaperPortfolioIdentity):
@@ -162,7 +166,7 @@ class CalculateFuturesRealizedPnlUseCase:
             raise TypeError(f"{_SUBJECT} fills must contain FuturesPaperFill values.")
         if not isinstance(economics, tuple):
             raise TypeError(f"{_SUBJECT} economics must be a tuple.")
-        if not all(isinstance(entry, FuturesProductEconomics) for entry in economics):
-            raise TypeError(f"{_SUBJECT} economics must contain FuturesProductEconomics values.")
+        if not all(isinstance(entry, FuturesContractEconomics) for entry in economics):
+            raise TypeError(f"{_SUBJECT} economics must contain FuturesContractEconomics values.")
         if not isinstance(as_of, PointInTime):
             raise TypeError(f"{_SUBJECT} as-of instant must be a PointInTime.")

@@ -12,11 +12,16 @@ class FuturesProductEconomicsConflictError(ValueError):
 
 
 class FuturesProductEconomicsStore(ABC):
-    """Persists futures product economics as immutable reference facts.
+    """Persists historical product-level futures economics as immutable facts.
 
-    Economics are product-level, keyed by their FuturesProductReference -- never
-    by a contract or expiry -- and assumed constant for that reference. They are
-    supplied by an operator, never fabricated or loaded from a provider here.
+    Historical reference only: profit and loss never reads what this port
+    stores. P&L-authoritative economics are persisted through
+    FuturesContractEconomicsStore, keyed by the complete contract.
+
+    Economics here are product-level, keyed by their FuturesProductReference --
+    never by a contract or expiry -- and assumed constant for that reference.
+    They are supplied by an operator, never fabricated or loaded from a
+    provider here.
 
     Implementations must honour these semantics for each product reference:
 

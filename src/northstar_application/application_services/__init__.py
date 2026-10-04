@@ -5,6 +5,10 @@ from northstar_application.application_services.acquire_futures_daily_history im
     FuturesDailyAcquisitionResult,
     FuturesHistoricalDataContractViolationError,
 )
+from northstar_application.application_services.acquire_futures_native_daily_history import (
+    AcquireFuturesNativeDailyHistoryUseCase,
+    FuturesDailySessionCoverageError,
+)
 from northstar_application.application_services.aggregate_futures_daily_session_bar import (
     AggregateFuturesDailySessionBarUseCase,
     InvalidFuturesSessionAggregationError,
@@ -65,9 +69,27 @@ from northstar_application.application_services.calculate_forward_research_metri
     CalculateForwardResearchMetricsUseCase,
     ForwardResearchStrategyHorizonMetrics,
 )
+from northstar_application.application_services.calculate_futures_analysis import (
+    CalculateFuturesAnalysisUseCase,
+    FuturesAnalysis,
+    FuturesResearchActionMetrics,
+)
 from northstar_application.application_services.calculate_futures_forward_metrics import (
     CalculateFuturesForwardResearchMetricsUseCase,
     FuturesForwardResearchStrategyHorizonMetrics,
+)
+from northstar_application.application_services.calculate_futures_paper_performance import (
+    CalculateFuturesPaperPerformanceUseCase,
+    FuturesPaperCompletedTrade,
+    FuturesPaperDecisionDistribution,
+    FuturesPaperDrawdown,
+    FuturesPaperEquityPoint,
+    FuturesPaperExecutionActivity,
+    FuturesPaperOpenExposure,
+    FuturesPaperPerformance,
+    FuturesPaperProfitFactorUnavailableReason,
+    FuturesPaperTradeDirection,
+    FuturesPaperTradeStatistics,
 )
 from northstar_application.application_services.calculate_futures_paper_trading_metrics import (
     CalculateFuturesPaperTradingMetricsUseCase,
@@ -76,7 +98,7 @@ from northstar_application.application_services.calculate_futures_paper_trading_
 from northstar_application.application_services.calculate_futures_realized_pnl import (
     CalculateFuturesRealizedPnlUseCase,
     FuturesContractRealizedPnl,
-    InvalidFuturesProductEconomicsInputError,
+    InvalidFuturesContractEconomicsInputError,
 )
 from northstar_application.application_services.calculate_futures_research_metrics import (
     CalculateFuturesHistoricalResearchMetricsUseCase,
@@ -113,6 +135,18 @@ from northstar_application.application_services.freeze_futures_forward_research_
 )
 from northstar_application.application_services.futures_analysis_result import (
     FuturesAnalysisResult,
+)
+from northstar_application.application_services.futures_daily_bar_finality_policies import (
+    DisabledFuturesDailyBarFinalityPolicy,
+    InvalidFuturesDailyBarFinalityPolicyError,
+    OperatorApprovedFuturesDailyBarFinalityPolicy,
+)
+from northstar_application.application_services.futures_expiry_flatten_guard import (
+    FuturesExpiryFlattenGuard,
+    FuturesExpiryFlattenPolicy,
+    FuturesExpiryWindowAssessment,
+    FuturesExpiryWindowError,
+    InvalidFuturesExpiryFlattenPolicyError,
 )
 from northstar_application.application_services.futures_forward_research_record import (
     FuturesForwardResearchRecord,
@@ -206,9 +240,9 @@ from northstar_application.application_services.simulate_paper_execution import 
     SimulatePaperExecutionUseCase,
 )
 from northstar_application.application_services.value_futures_paper_portfolio import (
+    FuturesContractEconomicsContractViolationError,
+    FuturesContractEconomicsNotFoundError,
     FuturesContractUnrealizedPnl,
-    FuturesProductEconomicsContractViolationError,
-    FuturesProductEconomicsNotFoundError,
     ValueFuturesPaperPortfolioUseCase,
 )
 
@@ -265,6 +299,8 @@ __all__ = [
     "BuildPaperTradingReportUseCase",
     "PaperTradingReport",
     "AcquireFuturesDailyHistoryUseCase",
+    "AcquireFuturesNativeDailyHistoryUseCase",
+    "FuturesDailySessionCoverageError",
     "AggregateFuturesDailySessionBarUseCase",
     "BuildPaperPortfolioUseCase",
     "FuturesDailyAcquisitionResult",
@@ -293,6 +329,14 @@ __all__ = [
     "FuturesForwardResearchReport",
     "FuturesForwardResearchStrategyHorizonMetrics",
     "CreateFuturesExecutionIntentUseCase",
+    "DisabledFuturesDailyBarFinalityPolicy",
+    "InvalidFuturesDailyBarFinalityPolicyError",
+    "OperatorApprovedFuturesDailyBarFinalityPolicy",
+    "FuturesExpiryFlattenGuard",
+    "FuturesExpiryFlattenPolicy",
+    "FuturesExpiryWindowAssessment",
+    "FuturesExpiryWindowError",
+    "InvalidFuturesExpiryFlattenPolicyError",
     "FuturesExecutionIntentDecision",
     "FuturesExecutionIntentNoIntentReason",
     "FuturesPaperExecutionIdentityService",
@@ -312,6 +356,20 @@ __all__ = [
     "RunFuturesPaperTradingUseCase",
     "FuturesPaperTradingStrategyContractMetrics",
     "CalculateFuturesPaperTradingMetricsUseCase",
+    "FuturesPaperPerformance",
+    "FuturesPaperDecisionDistribution",
+    "FuturesPaperExecutionActivity",
+    "FuturesPaperCompletedTrade",
+    "FuturesPaperOpenExposure",
+    "FuturesPaperTradeStatistics",
+    "FuturesPaperEquityPoint",
+    "FuturesPaperDrawdown",
+    "FuturesPaperTradeDirection",
+    "FuturesPaperProfitFactorUnavailableReason",
+    "CalculateFuturesPaperPerformanceUseCase",
+    "FuturesAnalysis",
+    "FuturesResearchActionMetrics",
+    "CalculateFuturesAnalysisUseCase",
     "FuturesPaperTradingReport",
     "BuildFuturesPaperTradingReportUseCase",
     "BuildFuturesPaperTradingValuationUseCase",
@@ -319,9 +377,9 @@ __all__ = [
     "FuturesPaperTradingValuation",
     "FuturesContractRealizedPnl",
     "CalculateFuturesRealizedPnlUseCase",
-    "InvalidFuturesProductEconomicsInputError",
+    "InvalidFuturesContractEconomicsInputError",
     "FuturesContractUnrealizedPnl",
-    "FuturesProductEconomicsContractViolationError",
-    "FuturesProductEconomicsNotFoundError",
+    "FuturesContractEconomicsContractViolationError",
+    "FuturesContractEconomicsNotFoundError",
     "ValueFuturesPaperPortfolioUseCase",
 ]

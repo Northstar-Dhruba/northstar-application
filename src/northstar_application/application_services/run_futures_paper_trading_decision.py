@@ -33,8 +33,16 @@ independently. An order persisted before a failed fill write simply remains
 pending and a later run settles it, and fills settled for older orders stay
 valid facts even if the current decision then fails.
 
-The run reads no clock, touches no provider or calendar, and calculates no
-profit and loss. Futures paper trading is session-daily only.
+Pre-expiry flatten
+------------------
+An optional FuturesExpiryFlattenGuard assesses the record's exact contract and
+decision instant before the policy runs, and the policy then targets zero
+exposure once that assessment requires a flatten. The assessment is carried
+on the result. Without a guard, every step above is unchanged.
+
+The run reads no clock, touches no provider, consults a trading calendar only
+through that optional guard, and calculates no profit and loss. Futures paper
+trading is session-daily only.
 """
 
 from __future__ import annotations
@@ -48,6 +56,7 @@ from northstar_core.paper_trading import (
     FuturesPaperFill,
     FuturesPaperOrder,
     FuturesPaperPortfolio,
+    OrderSide,
     PaperOrderIdentity,
     PaperPortfolioIdentity,
 )
@@ -60,6 +69,10 @@ from northstar_application.application_services.create_futures_execution_intent 
     CreateFuturesExecutionIntentUseCase,
     FuturesExecutionIntentDecision,
     FuturesExecutionIntentNoIntentReason,
+)
+from northstar_application.application_services.futures_expiry_flatten_guard import (
+    FuturesExpiryFlattenGuard,
+    FuturesExpiryWindowAssessment,
 )
 from northstar_application.application_services.futures_forward_research_record import (
     FuturesForwardResearchRecord,
@@ -258,6 +271,10 @@ class FuturesPaperTradingDecisionResult:
     ``portfolio_before`` is the portfolio as of the decision instant -- the
     exposure the policy was judged against -- and never contains this
     decision's own fill.
+
+    ``expiry_window`` is the pre-expiry assessment the policy was given, or
+    None when no guard was configured. A decision may be expiry-governed only
+    when it carries an assessment requiring a flatten, and must be when it does.
     """
 
     record: FuturesForwardResearchRecord
@@ -266,6 +283,7 @@ class FuturesPaperTradingDecisionResult:
     order: FuturesPaperOrder | None
     fill: FuturesPaperFill | None
     available_through: PointInTime
+    expiry_window: FuturesExpiryWindowAssessment | None = None
 
     def __post_init__(self) -> None:
         self._validate_types()
@@ -303,8 +321,14 @@ class FuturesPaperTradingDecisionResult:
             raise TypeError(f"{subject} fill must be a FuturesPaperFill or None.")
         if not isinstance(self.available_through, PointInTime):
             raise TypeError(f"{subject} available-through must be a PointInTime.")
+        if self.expiry_window is not None and not isinstance(
+            self.expiry_window, FuturesExpiryWindowAssessment
+        ):
+            raise TypeError(f"{subject} expiry window must be a FuturesExpiryWindowAssessment.")
 
     def _validate_decision_follows_the_action(self) -> None:
+        if self._validate_expiry_governance():
+            return
         is_hold = self.record.result.recommendation.action.value == _HOLD_ACTION
         reason = self.decision.no_intent_reason
         if is_hold and reason is not FuturesExecutionIntentNoIntentReason.HOLD:
@@ -315,6 +339,51 @@ class FuturesPaperTradingDecisionResult:
             raise ValueError(
                 "FuturesPaperTradingDecisionResult cannot decline a directional decision as a hold."
             )
+
+    def _validate_expiry_governance(self) -> bool:
+        """Check the expiry window and return whether it governs the decision.
+
+        Only here may a HOLD carry an order: an expiry-governed decision must
+        close the pre-decision position exactly -- full size, opposite side --
+        or decline because the portfolio is already flat. Every other decision
+        is held to the ordinary action rules by the caller.
+        """
+        subject = "FuturesPaperTradingDecisionResult"
+        window = self.expiry_window
+        if window is not None and (
+            window.contract != self.record.contract
+            or window.decision_instant.compare(self.record.decision_instant) != 0
+        ):
+            raise ValueError(f"{subject} expiry window must assess the record's decision.")
+        required = window is not None and window.flatten_required
+        if self.decision.expiry_flatten != required:
+            raise ValueError(
+                f"{subject} decision must be expiry-governed exactly when its expiry window "
+                "requires a flatten."
+            )
+        if not required:
+            return False
+
+        position = self.portfolio_before.get_position(self.record.contract)
+        intent = self.decision.intent
+        if intent is None:
+            if position is not None:
+                raise ValueError(
+                    f"{subject} cannot decline an expiry flatten while a position is open."
+                )
+            return True
+        closing_side = (
+            None if position is None else (OrderSide.SELL if position.is_long else OrderSide.BUY)
+        )
+        if (
+            position is None
+            or intent.side is not closing_side
+            or intent.contracts.value != position.absolute_contracts
+        ):
+            raise ValueError(
+                f"{subject} expiry flatten intent must close the pre-decision position exactly."
+            )
+        return True
 
     def _validate_execution(self) -> None:
         intent = self.decision.intent
@@ -368,6 +437,7 @@ class RunFuturesPaperTradingDecisionUseCase:
         order_repository: FuturesPaperOrderRepository,
         fill_store: FuturesPaperFillStore,
         fill_repository: FuturesPaperFillRepository,
+        expiry_guard: FuturesExpiryFlattenGuard | None = None,
     ) -> None:
         for name, value, expected in (
             ("forward_repository", forward_repository, FuturesForwardResearchRecordRepository),
@@ -381,7 +451,13 @@ class RunFuturesPaperTradingDecisionUseCase:
                 raise TypeError(
                     f"RunFuturesPaperTradingDecisionUseCase {name} must be a {expected.__name__}."
                 )
+        if expiry_guard is not None and not isinstance(expiry_guard, FuturesExpiryFlattenGuard):
+            raise TypeError(
+                "RunFuturesPaperTradingDecisionUseCase expiry_guard must be a "
+                "FuturesExpiryFlattenGuard or None."
+            )
 
+        self._expiry_guard = expiry_guard
         self._forward_repository = forward_repository
         self._order_store = order_store
         self._order_repository = order_repository
@@ -402,6 +478,12 @@ class RunFuturesPaperTradingDecisionUseCase:
         """Run one frozen decision for one paper portfolio as of one evidence cutoff."""
         self._validate_inputs(record, portfolio_identity, target_contracts, available_through)
         self._verify_frozen(record)
+        # Assessed before anything is written, so a calendar failure stores nothing.
+        expiry_window = (
+            None
+            if self._expiry_guard is None
+            else self._expiry_guard.assess(record.contract, record.decision_instant)
+        )
 
         orders, fills = _load_history(
             self._order_repository,
@@ -415,7 +497,9 @@ class RunFuturesPaperTradingDecisionUseCase:
         portfolio_before = self._build_portfolio.execute(
             portfolio_identity, record.strategy_identity, fills, record.decision_instant
         )
-        decision = self._policy.execute(record, portfolio_before, target_contracts)
+        decision = self._policy.execute(
+            record, portfolio_before, target_contracts, expiry_window=expiry_window
+        )
 
         order_identity = self._identities.order_identity(record, portfolio_identity)
         existing = next((order for order in orders if order.identity == order_identity), None)
@@ -433,6 +517,7 @@ class RunFuturesPaperTradingDecisionUseCase:
                 order=None,
                 fill=None,
                 available_through=available_through,
+                expiry_window=expiry_window,
             )
 
         order = FuturesPaperOrder(identity=order_identity, intent=decision.intent)
@@ -452,6 +537,7 @@ class RunFuturesPaperTradingDecisionUseCase:
             order=order,
             fill=fill,
             available_through=available_through,
+            expiry_window=expiry_window,
         )
 
     # -- forward record ----------------------------------------------------

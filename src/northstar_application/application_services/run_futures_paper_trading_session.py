@@ -10,6 +10,8 @@ portfolio through one explicit cutoff, over market data already persisted:
    strategy on that contract and settles pending orders as bars become visible;
 3. build the execution report from that run.
 
+An optional FuturesExpiryFlattenGuard is passed through to the run unchanged.
+
 It composes those use cases and restates none of their rules. It acquires no
 market data, reads no clock, and values nothing: execution needs no product
 economics, so missing economics can never block a legitimate decision, order or
@@ -34,6 +36,9 @@ from northstar_application.application_services.build_futures_paper_trading_repo
 )
 from northstar_application.application_services.freeze_futures_forward_research_decision import (
     FreezeFuturesForwardResearchDecisionUseCase,
+)
+from northstar_application.application_services.futures_expiry_flatten_guard import (
+    FuturesExpiryFlattenGuard,
 )
 from northstar_application.application_services.futures_forward_research_record import (
     FuturesForwardResearchRecord,
@@ -113,6 +118,7 @@ class RunFuturesPaperTradingSessionUseCase:
         order_repository: FuturesPaperOrderRepository,
         fill_store: FuturesPaperFillStore,
         fill_repository: FuturesPaperFillRepository,
+        expiry_guard: FuturesExpiryFlattenGuard | None = None,
     ) -> None:
         for name, value, expected in (
             ("market_repository", market_repository, FuturesHistoricalMarketDataRepository),
@@ -125,6 +131,8 @@ class RunFuturesPaperTradingSessionUseCase:
         ):
             if not isinstance(value, expected):
                 raise TypeError(f"{_SUBJECT} {name} must be a {expected.__name__}.")
+        if expiry_guard is not None and not isinstance(expiry_guard, FuturesExpiryFlattenGuard):
+            raise TypeError(f"{_SUBJECT} expiry_guard must be a FuturesExpiryFlattenGuard or None.")
 
         self._freeze = FreezeFuturesForwardResearchDecisionUseCase(
             market_repository, FuturesAssetAnalysisGenerator(), forward_store
@@ -136,6 +144,7 @@ class RunFuturesPaperTradingSessionUseCase:
             order_repository=order_repository,
             fill_store=fill_store,
             fill_repository=fill_repository,
+            expiry_guard=expiry_guard,
         )
         self._report = BuildFuturesPaperTradingReportUseCase()
 

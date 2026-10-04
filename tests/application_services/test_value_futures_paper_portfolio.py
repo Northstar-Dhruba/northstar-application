@@ -29,6 +29,7 @@ from northstar_core.foundation.value_objects import (
 )
 from northstar_core.futures import (
     FuturesContract,
+    FuturesContractEconomics,
     FuturesOHLCVBar,
     FuturesPointValue,
     FuturesProductEconomics,
@@ -42,13 +43,14 @@ from northstar_core.paper_trading import (
 from northstar_core.strategy import StrategyIdentity
 
 from northstar_application.application_services import (
+    FuturesContractEconomicsContractViolationError,
+    FuturesContractEconomicsNotFoundError,
     FuturesContractUnrealizedPnl,
     FuturesHistoricalDataContractViolationError,
-    FuturesProductEconomicsContractViolationError,
-    FuturesProductEconomicsNotFoundError,
     ValueFuturesPaperPortfolioUseCase,
 )
 from northstar_application.ports import (
+    FuturesContractEconomicsRepository,
     FuturesHistoricalMarketDataQuery,
     FuturesHistoricalMarketDataRepository,
     FuturesProductEconomicsRepository,
@@ -56,14 +58,23 @@ from northstar_application.ports import (
 
 _USD = Currency("USD")
 _EUR = Currency("EUR")
+_INR = Currency("INR")
 _DAILY = Timeframe("1d")
 _ES = FuturesProductReference(Symbol("ES"), ExchangeCode("CME"))
 _FESX = FuturesProductReference(Symbol("FESX"), ExchangeCode("EUREX"))
 _ES_DEC = FuturesContract(_ES, ExpirationDate("2026-12-18"))
 _ES_MAR = FuturesContract(_ES, ExpirationDate("2027-03-19"))
 _FESX_DEC = FuturesContract(_FESX, ExpirationDate("2026-12-18"))
-_ES_ECONOMICS = FuturesProductEconomics(_ES, FuturesPointValue(Decimal("50"), _USD))
-_FESX_ECONOMICS = FuturesProductEconomics(_FESX, FuturesPointValue(Decimal("10"), _EUR))
+_ES_POINT = FuturesPointValue(Decimal("50"), _USD)
+_ES_DEC_ECONOMICS = FuturesContractEconomics(_ES_DEC, _ES_POINT)
+_ES_MAR_ECONOMICS = FuturesContractEconomics(_ES_MAR, _ES_POINT)
+_FESX_DEC_ECONOMICS = FuturesContractEconomics(_FESX_DEC, FuturesPointValue(Decimal("10"), _EUR))
+# Historically plausible fixtures only: concurrent NIFTY expiries at lots of 75 and 65.
+_NIFTY = FuturesProductReference(Symbol("NIFTY"), ExchangeCode("NSE"))
+_NIFTY_NOV = FuturesContract(_NIFTY, ExpirationDate("2025-11-25"))
+_NIFTY_JAN = FuturesContract(_NIFTY, ExpirationDate("2026-01-27"))
+_NIFTY_NOV_ECONOMICS = FuturesContractEconomics(_NIFTY_NOV, FuturesPointValue(Decimal("75"), _INR))
+_NIFTY_JAN_ECONOMICS = FuturesContractEconomics(_NIFTY_JAN, FuturesPointValue(Decimal("65"), _INR))
 _PORTFOLIO = PaperPortfolioIdentity("futures-paper-1")
 _STRATEGY = StrategyIdentity("futures-forward")
 _CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
@@ -132,35 +143,46 @@ class RawMarket(FuturesHistoricalMarketDataRepository):
         return self.output
 
 
-class EconomicsRepository(FuturesProductEconomicsRepository):
-    def __init__(self, *economics: FuturesProductEconomics) -> None:
-        self.economics = {entry.reference: entry for entry in economics}
-        self.calls: list[FuturesProductReference] = []
+class EconomicsRepository(FuturesContractEconomicsRepository):
+    """A conforming exact-contract lookup: no fallback to another expiry."""
 
-    def get_economics(self, reference: FuturesProductReference):
-        self.calls.append(reference)
-        return self.economics.get(reference)
+    def __init__(self, *economics: FuturesContractEconomics) -> None:
+        self.economics = {entry.contract: entry for entry in economics}
+        self.calls: list[FuturesContract] = []
+
+    def get_economics(self, contract: FuturesContract):
+        self.calls.append(contract)
+        return self.economics.get(contract)
 
 
-class RawEconomics(FuturesProductEconomicsRepository):
+class RawEconomics(FuturesContractEconomicsRepository):
     def __init__(self, output: object) -> None:
         self.output = output
 
-    def get_economics(self, reference):
+    def get_economics(self, contract):
         return self.output
+
+
+class ProductEconomicsRepository(FuturesProductEconomicsRepository):
+    """The retained product-level port, which P&L must never accept."""
+
+    def get_economics(self, reference: FuturesProductReference):
+        return FuturesProductEconomics(reference, _ES_POINT)
 
 
 def _value(
     portfolio: FuturesPaperPortfolio,
     bars: list[FuturesOHLCVBar] | None = None,
     *,
-    economics: FuturesProductEconomicsRepository | None = None,
+    economics: FuturesContractEconomicsRepository | None = None,
     market: FuturesHistoricalMarketDataRepository | None = None,
     through: PointInTime = _T,
 ) -> tuple[FuturesContractUnrealizedPnl, ...]:
     return ValueFuturesPaperPortfolioUseCase(
         market if market is not None else MarketRepository(bars),
-        economics if economics is not None else EconomicsRepository(_ES_ECONOMICS, _FESX_ECONOMICS),
+        economics
+        if economics is not None
+        else EconomicsRepository(_ES_DEC_ECONOMICS, _ES_MAR_ECONOMICS, _FESX_DEC_ECONOMICS),
     ).execute(portfolio, through)
 
 
@@ -180,17 +202,23 @@ def _usd(amount: str) -> Money:
 
 def test_the_economics_port_is_abstract_with_one_lookup() -> None:
     with pytest.raises(TypeError):
-        FuturesProductEconomicsRepository()
-    public = [name for name in vars(FuturesProductEconomicsRepository) if not name.startswith("_")]
+        FuturesContractEconomicsRepository()
+    public = [name for name in vars(FuturesContractEconomicsRepository) if not name.startswith("_")]
 
     assert public == ["get_economics"]
 
 
-def test_a_conforming_repository_returns_economics_or_none() -> None:
-    repository = EconomicsRepository(_ES_ECONOMICS)
+def test_a_conforming_repository_returns_exact_contract_economics_or_none() -> None:
+    repository = EconomicsRepository(_ES_DEC_ECONOMICS)
 
-    assert repository.get_economics(_ES) == _ES_ECONOMICS
-    assert repository.get_economics(_FESX) is None
+    assert repository.get_economics(_ES_DEC) == _ES_DEC_ECONOMICS
+    assert repository.get_economics(_ES_MAR) is None
+    assert repository.get_economics(_FESX_DEC) is None
+
+
+def test_the_product_level_port_is_not_accepted_for_valuation() -> None:
+    with pytest.raises(TypeError, match="must be a FuturesContractEconomicsRepository"):
+        ValueFuturesPaperPortfolioUseCase(MarketRepository(), ProductEconomicsRepository())
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +227,7 @@ def test_a_conforming_repository_returns_economics_or_none() -> None:
 
 
 def test_an_empty_portfolio_reads_nothing() -> None:
-    market, economics = MarketRepository(), EconomicsRepository(_ES_ECONOMICS)
+    market, economics = MarketRepository(), EconomicsRepository(_ES_DEC_ECONOMICS)
 
     assert _value(_portfolio(), market=market, economics=economics) == ()
     assert (market.queries, economics.calls) == ([], [])
@@ -363,8 +391,12 @@ def test_an_expired_open_contract_is_valued_from_its_last_stored_close() -> None
     expired = FuturesContract(_ES, ExpirationDate("2026-09-10"))
     position = _position(1, "100", expired)
 
-    (valued,) = _value(_portfolio(position), [_bar(_MON, "104", contract=expired)])
-    (unvalued,) = _value(_portfolio(position), [])
+    economics = EconomicsRepository(FuturesContractEconomics(expired, _ES_POINT))
+
+    (valued,) = _value(
+        _portfolio(position), [_bar(_MON, "104", contract=expired)], economics=economics
+    )
+    (unvalued,) = _value(_portfolio(position), [], economics=economics)
 
     assert valued.unrealized_pnl == _usd("200")
     assert not unvalued.is_available
@@ -375,8 +407,8 @@ def test_an_expired_open_contract_is_valued_from_its_last_stored_close() -> None
 # ---------------------------------------------------------------------------
 
 
-def test_expiries_share_one_economics_lookup_and_are_valued_separately() -> None:
-    economics = EconomicsRepository(_ES_ECONOMICS)
+def test_each_expiry_resolves_its_own_economics_and_is_valued_separately() -> None:
+    economics = EconomicsRepository(_ES_DEC_ECONOMICS, _ES_MAR_ECONOMICS)
     market = MarketRepository(
         [_bar(_TUE, "110", contract=_ES_DEC), _bar(_TUE, "80", contract=_ES_MAR)]
     )
@@ -384,7 +416,7 @@ def test_expiries_share_one_economics_lookup_and_are_valued_separately() -> None
 
     results = _value(portfolio, economics=economics, market=market)
 
-    assert economics.calls == [_ES]
+    assert economics.calls == [_ES_DEC, _ES_MAR]
     assert [query.contract for query in market.queries] == [_ES_DEC, _ES_MAR]
     assert [(r.contract, r.unrealized_pnl) for r in results] == [
         (_ES_DEC, _usd("500")),
@@ -392,14 +424,53 @@ def test_expiries_share_one_economics_lookup_and_are_valued_separately() -> None
     ]
 
 
+def test_expiries_of_one_product_are_valued_at_their_own_point_values() -> None:
+    """INDIA-1: NIFTY NOV at 75 INR and JAN at 65 INR per point, in one portfolio."""
+    economics = EconomicsRepository(_NIFTY_NOV_ECONOMICS, _NIFTY_JAN_ECONOMICS)
+    portfolio = _portfolio(_position(2, "24000", _NIFTY_NOV), _position(-3, "24100", _NIFTY_JAN))
+    bars = [
+        _bar(_TUE, "24010", contract=_NIFTY_NOV),
+        _bar(_TUE, "24080", contract=_NIFTY_JAN),
+    ]
+
+    results = _value(portfolio, bars, economics=economics)
+
+    assert economics.calls == [_NIFTY_NOV, _NIFTY_JAN]
+    assert [(r.contract, r.unrealized_pnl) for r in results] == [
+        # (24010 - 24000) * 2 * 75
+        (_NIFTY_NOV, Money(Decimal("1500"), _INR)),
+        # (24080 - 24100) * -3 * 65; at NOV's 75 it would be 4500
+        (_NIFTY_JAN, Money(Decimal("3900"), _INR)),
+    ]
+    assert {r.settlement_currency for r in results} == {_INR}
+
+
+def test_one_expiry_never_borrows_another_expirys_economics() -> None:
+    portfolio = _portfolio(_position(1, "24000", _NIFTY_NOV), _position(1, "24000", _NIFTY_JAN))
+    market = MarketRepository([_bar(_TUE, "24010", contract=_NIFTY_NOV)])
+
+    with pytest.raises(FuturesContractEconomicsNotFoundError, match="NIFTY@NSE 2026-01-27") as info:
+        _value(portfolio, market=market, economics=EconomicsRepository(_NIFTY_NOV_ECONOMICS))
+
+    assert info.value.contract == _NIFTY_JAN
+    assert market.queries == []
+
+
+def test_another_markets_economics_are_never_used() -> None:
+    portfolio = _portfolio(_position(1, "24000", _NIFTY_NOV))
+
+    with pytest.raises(FuturesContractEconomicsNotFoundError, match="NIFTY@NSE 2025-11-25"):
+        _value(portfolio, [], economics=EconomicsRepository(_ES_DEC_ECONOMICS, _ES_MAR_ECONOMICS))
+
+
 def test_currencies_stay_separate() -> None:
-    economics = EconomicsRepository(_ES_ECONOMICS, _FESX_ECONOMICS)
+    economics = EconomicsRepository(_ES_DEC_ECONOMICS, _FESX_DEC_ECONOMICS)
     portfolio = _portfolio(_position(1, "100"), _position(2, "5000", _FESX_DEC))
     bars = [_bar(_TUE, "110"), _bar(_TUE, "5020", contract=_FESX_DEC)]
 
     results = _value(portfolio, bars, economics=economics)
 
-    assert economics.calls == [_ES, _FESX]
+    assert economics.calls == [_ES_DEC, _FESX_DEC]
     assert [r.unrealized_pnl for r in results] == [_usd("500"), Money(Decimal("400"), _EUR)]
 
 
@@ -432,23 +503,34 @@ def test_missing_economics_fails_the_whole_valuation_before_any_mark_read() -> N
     market = MarketRepository([_bar(_TUE, "110")])
     portfolio = _portfolio(_position(1, "100"), _position(1, "5000", _FESX_DEC))
 
-    with pytest.raises(FuturesProductEconomicsNotFoundError, match="FESX@EUREX"):
-        _value(portfolio, market=market, economics=EconomicsRepository(_ES_ECONOMICS))
+    with pytest.raises(
+        FuturesContractEconomicsNotFoundError, match="FESX@EUREX 2026-12-18"
+    ) as info:
+        _value(portfolio, market=market, economics=EconomicsRepository(_ES_DEC_ECONOMICS))
 
+    assert info.value.contract == _FESX_DEC
     assert market.queries == []
 
 
 @pytest.mark.parametrize(
     ("output", "message"),
     [
-        ("economics", "must return FuturesProductEconomics or None"),
-        (FuturesPointValue(Decimal("50"), _USD), "must return FuturesProductEconomics or None"),
-        (_FESX_ECONOMICS, "returned economics for FESX@EUREX when asked for ES@CME"),
+        ("economics", "must return FuturesContractEconomics or None"),
+        (FuturesPointValue(Decimal("50"), _USD), "must return FuturesContractEconomics or None"),
+        (FuturesProductEconomics(_ES, _ES_POINT), "must return FuturesContractEconomics or None"),
+        (
+            _FESX_DEC_ECONOMICS,
+            "returned economics for FESX@EUREX 2026-12-18 when asked for ES@CME 2026-12-18",
+        ),
+        (
+            _ES_MAR_ECONOMICS,
+            "returned economics for ES@CME 2027-03-19 when asked for ES@CME 2026-12-18",
+        ),
     ],
-    ids=["string", "point-value", "wrong-reference"],
+    ids=["string", "point-value", "product-economics", "wrong-product", "wrong-expiry"],
 )
 def test_a_misbehaving_economics_repository_is_a_contract_violation(output, message) -> None:
-    with pytest.raises(FuturesProductEconomicsContractViolationError, match=message):
+    with pytest.raises(FuturesContractEconomicsContractViolationError, match=message):
         _value(_portfolio(_position(1, "100")), [_bar(_TUE, "110")], economics=RawEconomics(output))
 
 
@@ -458,7 +540,7 @@ def test_a_misbehaving_economics_repository_is_a_contract_violation(output, mess
 
 
 def test_a_portfolio_at_another_instant_is_rejected_before_any_read() -> None:
-    market, economics = MarketRepository(), EconomicsRepository(_ES_ECONOMICS)
+    market, economics = MarketRepository(), EconomicsRepository(_ES_DEC_ECONOMICS)
 
     with pytest.raises(ValueError, match="cannot be valued with marks"):
         _value(
@@ -535,7 +617,7 @@ _PRECISE_POINT = Decimal("12.34567890123456789012345678")
 @pytest.mark.parametrize("rounding", [ROUND_DOWN, ROUND_CEILING, ROUND_HALF_UP])
 def test_valuation_ignores_the_callers_decimal_context(precision: int, rounding: str) -> None:
     economics = EconomicsRepository(
-        FuturesProductEconomics(_ES, FuturesPointValue(_PRECISE_POINT, _USD))
+        FuturesContractEconomics(_ES_DEC, FuturesPointValue(_PRECISE_POINT, _USD))
     )
     portfolio = _portfolio(_position(-7, _PRECISE_ENTRY))
     bars = [_bar(_TUE, _PRECISE_MARK)]
@@ -634,13 +716,18 @@ def test_the_public_surface_is_exported_without_helpers() -> None:
     import northstar_application.application_services as services
     import northstar_application.ports as ports
 
-    assert "FuturesProductEconomicsRepository" in ports.__all__
+    assert "FuturesContractEconomicsRepository" in ports.__all__
     for name in (
         "FuturesContractUnrealizedPnl",
         "ValueFuturesPaperPortfolioUseCase",
+        "FuturesContractEconomicsNotFoundError",
+        "FuturesContractEconomicsContractViolationError",
+    ):
+        assert name in services.__all__
+    for retired in (
         "FuturesProductEconomicsNotFoundError",
         "FuturesProductEconomicsContractViolationError",
     ):
-        assert name in services.__all__
+        assert retired not in services.__all__
     for private in ("_PNL_CONTEXT", "_last_close", "_DAILY"):
         assert not hasattr(services, private)

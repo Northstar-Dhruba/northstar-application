@@ -22,9 +22,9 @@ from northstar_core.foundation.value_objects import (
 )
 from northstar_core.futures import (
     FuturesContract,
+    FuturesContractEconomics,
     FuturesOHLCVBar,
     FuturesPointValue,
-    FuturesProductEconomics,
     FuturesProductReference,
 )
 from northstar_core.paper_trading import (
@@ -52,16 +52,17 @@ from northstar_core.strategy import (
 from northstar_application.application_services import (
     FreezeFuturesForwardResearchDecisionUseCase,
     FuturesAnalysisResult,
+    FuturesContractEconomicsContractViolationError,
+    FuturesContractEconomicsNotFoundError,
     FuturesForwardResearchRecord,
     FuturesPaperDecisionSnapshot,
     FuturesPaperPortfolioStrategyConflictError,
     FuturesPaperTradingSnapshot,
-    FuturesProductEconomicsContractViolationError,
-    FuturesProductEconomicsNotFoundError,
     GetFuturesPaperTradingSnapshotUseCase,
     RunFuturesPaperTradingSessionUseCase,
 )
 from northstar_application.ports import (
+    FuturesContractEconomicsRepository,
     FuturesForwardResearchRecordConflictError,
     FuturesForwardResearchRecordRepository,
     FuturesForwardResearchRecordStore,
@@ -72,7 +73,6 @@ from northstar_application.ports import (
     FuturesPaperOrderConflictError,
     FuturesPaperOrderRepository,
     FuturesPaperOrderStore,
-    FuturesProductEconomicsRepository,
 )
 
 _ES = FuturesProductReference(Symbol("ES"), ExchangeCode("CME"))
@@ -84,9 +84,14 @@ _DAILY = Timeframe("1d")
 _ALPHA = StrategyIdentity("alpha")
 _BETA = StrategyIdentity("beta")
 _PORTFOLIO = PaperPortfolioIdentity("futures-paper-alpha")
-_USD, _EUR = Currency("USD"), Currency("EUR")
-_ES_ECONOMICS = FuturesProductEconomics(_ES, FuturesPointValue(Decimal("50"), _USD))
-_FESX_ECONOMICS = FuturesProductEconomics(_FESX, FuturesPointValue(Decimal("10"), _EUR))
+_USD, _EUR, _INR = Currency("USD"), Currency("EUR"), Currency("INR")
+_ES_DEC_ECONOMICS = FuturesContractEconomics(_ES_DEC, FuturesPointValue(Decimal("50"), _USD))
+_ES_MAR_ECONOMICS = FuturesContractEconomics(_ES_MAR, FuturesPointValue(Decimal("50"), _USD))
+_FESX_DEC_ECONOMICS = FuturesContractEconomics(_FESX_DEC, FuturesPointValue(Decimal("10"), _EUR))
+_NIFTY = FuturesProductReference(Symbol("NIFTY"), ExchangeCode("NSE"))
+_NIFTY_OCT = FuturesContract(_NIFTY, ExpirationDate("2026-10-27"))
+_NIFTY_NOV = FuturesContract(_NIFTY, ExpirationDate("2026-11-23"))
+_NIFTY_OCT_ECONOMICS = FuturesContractEconomics(_NIFTY_OCT, FuturesPointValue(Decimal("65"), _INR))
 
 
 def _session_dates(count: int) -> list[date]:
@@ -156,12 +161,16 @@ def _text(left: str, right: str) -> int:
 
 
 class World:
-    def __init__(self, *bars: FuturesOHLCVBar, economics=(_ES_ECONOMICS, _FESX_ECONOMICS)):
+    def __init__(
+        self,
+        *bars: FuturesOHLCVBar,
+        economics=(_ES_DEC_ECONOMICS, _ES_MAR_ECONOMICS, _FESX_DEC_ECONOMICS),
+    ):
         self.bars = list(bars)
         self.records: dict = {}
         self.orders: dict = {}
         self.fills: dict = {}
-        self.economics = {entry.reference: entry for entry in economics}
+        self.economics = {entry.contract: entry for entry in economics}
         self.writes = 0
 
     def facts(self) -> tuple:
@@ -292,12 +301,12 @@ class Fills(FuturesPaperFillRepository):
         return tuple(sorted(owned, key=cmp_to_key(compare)))
 
 
-class Economics(FuturesProductEconomicsRepository):
+class Economics(FuturesContractEconomicsRepository):
     def __init__(self, world: World) -> None:
         self.world = world
 
-    def get_economics(self, reference):
-        return self.world.economics.get(reference)
+    def get_economics(self, contract):
+        return self.world.economics.get(contract)
 
 
 def _session(world: World, session: int, *, contract: FuturesContract = _ES_DEC) -> None:
@@ -327,7 +336,7 @@ def _snapshot(
     *,
     contract: FuturesContract | None = _ES_DEC,
     strategy: StrategyIdentity = _ALPHA,
-    economics: FuturesProductEconomicsRepository | None = None,
+    economics: FuturesContractEconomicsRepository | None = None,
 ) -> FuturesPaperTradingSnapshot:
     return GetFuturesPaperTradingSnapshotUseCase(
         market_repository=Market(world),
@@ -611,38 +620,73 @@ def test_missing_economics_leaves_every_other_section_available() -> None:
     snapshot = _snapshot(world, _at(26))
 
     assert snapshot.valuation is None
-    assert snapshot.missing_economics == _ES
+    assert snapshot.missing_economics == _ES_DEC
     assert _action(snapshot) == "BUY"
     assert snapshot.latest_market_bar == _LATER[26]
     assert snapshot.portfolio.positions == (FuturesPosition(_ES_DEC, 1, _LATER[26].open),)
     assert len(snapshot.recent_decisions) == 2
 
 
-def test_the_first_missing_product_is_named_when_several_are_missing() -> None:
+def test_the_first_missing_contract_is_named_when_several_are_missing() -> None:
     world = World(economics=())
     _trade(world, _order("o-fesx", _FESX_DEC, OrderSide.BUY, 1, _at(1)), "5000", _at(2))
     _trade(world, _order("o-es", _ES_DEC, OrderSide.BUY, 1, _at(1)), "100", _at(3))
 
     snapshot = _snapshot(world, _at(4))
 
-    assert snapshot.missing_economics == _FESX
+    assert snapshot.missing_economics == _FESX_DEC
 
 
-def test_the_not_found_error_names_its_product() -> None:
-    error = FuturesProductEconomicsNotFoundError("message", _ES)
+def test_a_missing_expiry_is_named_as_that_contract_not_its_product() -> None:
+    """INDIA-1: NIFTY OCT economics exist, NOV do not; only NOV is reported missing."""
+    world = World(economics=(_NIFTY_OCT_ECONOMICS,))
+    _trade(world, _order("o-oct", _NIFTY_OCT, OrderSide.BUY, 1, _at(1)), "24000", _at(2))
+    _trade(world, _order("o-nov", _NIFTY_NOV, OrderSide.BUY, 1, _at(1)), "24050", _at(3))
 
-    assert (str(error), error.reference) == ("message", _ES)
-    assert FuturesProductEconomicsNotFoundError("message").reference is None
+    snapshot = _snapshot(world, _at(4), contract=None)
+
+    assert snapshot.valuation is None
+    assert snapshot.missing_economics == _NIFTY_NOV
+    assert isinstance(snapshot.missing_economics, FuturesContract)
+    assert snapshot.missing_economics != _NIFTY_OCT
+    assert snapshot.missing_economics.product == _NIFTY
+    assert str(snapshot.missing_economics) == "NIFTY@NSE 2026-11-23"
+
+
+def test_a_configured_sibling_expiry_values_without_the_missing_one() -> None:
+    world = World(economics=(_NIFTY_OCT_ECONOMICS,))
+    _trade(world, _order("o-oct", _NIFTY_OCT, OrderSide.BUY, 1, _at(1)), "24000", _at(2))
+
+    snapshot = _snapshot(world, _at(4), contract=None)
+
+    assert snapshot.missing_economics is None
+    assert [row.contract for row in snapshot.valuation.contracts] == [_NIFTY_OCT]
+    assert snapshot.valuation.contracts[0].settlement_currency == _INR
+
+
+def test_the_not_found_error_names_its_contract() -> None:
+    error = FuturesContractEconomicsNotFoundError("message", _ES_DEC)
+
+    assert (str(error), error.contract) == ("message", _ES_DEC)
+    assert FuturesContractEconomicsNotFoundError("message").contract is None
+    assert not hasattr(error, "reference")
+
+
+def test_the_missing_economics_must_be_a_contract_not_a_product() -> None:
+    snapshot = _snapshot(World(economics=()), _at(4))
+
+    with pytest.raises(TypeError, match="missing economics must be a FuturesContract or None"):
+        _replace(snapshot, missing_economics=_ES)
 
 
 def test_a_misbehaving_economics_repository_still_raises() -> None:
-    class Corrupt(FuturesProductEconomicsRepository):
-        def get_economics(self, reference):
+    class Corrupt(FuturesContractEconomicsRepository):
+        def get_economics(self, contract):
             return "economics"
 
     world = _daily(World(*_phase_a()), 26)
 
-    with pytest.raises(FuturesProductEconomicsContractViolationError):
+    with pytest.raises(FuturesContractEconomicsContractViolationError):
         _snapshot(world, _at(26), economics=Corrupt())
 
 
@@ -751,7 +795,7 @@ _BETA_DECISION = (FuturesPaperDecisionSnapshot(_record(_at(26), strategy=_BETA),
         ({"latest_market_bar": _bar(27, "1")}, "market bar"),
         ({"recent_decisions": _FUTURE_DECISION}, "visible daily"),
         ({"recent_decisions": _BETA_DECISION}, "visible daily"),
-        ({"missing_economics": _ES}, "not both"),
+        ({"missing_economics": _ES_DEC}, "not both"),
         ({"valuation": None}, "not both"),
         ({"fills": ()}, "decision fills"),
     ],
