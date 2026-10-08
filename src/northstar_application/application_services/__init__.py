@@ -63,6 +63,14 @@ from northstar_application.application_services.build_historical_research_report
     BuildHistoricalResearchReportUseCase,
     HistoricalResearchReport,
 )
+from northstar_application.application_services.build_option_chain_snapshot import (
+    BuildOptionChainSnapshotUseCase,
+    InvalidOptionChainSnapshotQueryError,
+    OptionChainContractViolationError,
+    OptionChainListingNotKnownError,
+    OptionChainSessionNotFoundError,
+    OptionChainSnapshotQuery,
+)
 from northstar_application.application_services.build_paper_portfolio import (
     BuildPaperPortfolioUseCase,
     InvalidPaperFillHistoryError,
@@ -400,4 +408,10 @@ __all__ = [
     "OptionDailyAcquisitionResult",
     "OptionDailySessionCoverageError",
     "OptionHistoricalDataContractViolationError",
+    "BuildOptionChainSnapshotUseCase",
+    "InvalidOptionChainSnapshotQueryError",
+    "OptionChainContractViolationError",
+    "OptionChainListingNotKnownError",
+    "OptionChainSessionNotFoundError",
+    "OptionChainSnapshotQuery",
 ]
