@@ -9,6 +9,12 @@ from northstar_application.application_services.acquire_futures_native_daily_his
     AcquireFuturesNativeDailyHistoryUseCase,
     FuturesDailySessionCoverageError,
 )
+from northstar_application.application_services.acquire_option_native_daily_history import (
+    AcquireOptionNativeDailyHistoryUseCase,
+    OptionDailyAcquisitionResult,
+    OptionDailySessionCoverageError,
+    OptionHistoricalDataContractViolationError,
+)
 from northstar_application.application_services.aggregate_futures_daily_session_bar import (
     AggregateFuturesDailySessionBarUseCase,
     InvalidFuturesSessionAggregationError,
@@ -390,4 +396,8 @@ __all__ = [
     "GetOptionContractEconomicsUseCase",
     "OptionContractEconomicsContractViolationError",
     "OptionContractEconomicsNotFoundError",
+    "AcquireOptionNativeDailyHistoryUseCase",
+    "OptionDailyAcquisitionResult",
+    "OptionDailySessionCoverageError",
+    "OptionHistoricalDataContractViolationError",
 ]
