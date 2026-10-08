@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ast
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -134,7 +134,9 @@ def _run(resolver=None, source=None, store=None, query=None):
 def test_one_observation_per_session_is_stored_as_one_batch() -> None:
     result, resolver, source, store = _run()
 
-    assert result == OptionDailyAcquisitionResult(_query(), session_count=3, daily_bar_count=3)
+    assert result == OptionDailyAcquisitionResult(
+        _query(), session_count=3, daily_bar_count=3, missing_trading_dates=()
+    )
     assert resolver.calls == [(_NIFTY, _DAYS[0], _DAYS[-1])]
     assert source.calls == [(_CONTRACT, _DAYS[0], _DAYS[-1])]
     assert len(store.batches) == 1
@@ -163,30 +165,65 @@ def test_bars_follow_calendar_order_whatever_the_source_order() -> None:
     ]
 
 
-def test_a_range_without_sessions_stores_nothing() -> None:
+def test_a_range_without_sessions_stores_an_empty_batch() -> None:
     result, _, source, store = _run(resolver=Resolver(()), source=Source(()))
 
-    assert (result.session_count, result.daily_bar_count) == (0, 0)
-    assert store.batches == []
+    assert result == OptionDailyAcquisitionResult(_query(), 0, 0, ())
+    assert store.batches == [()]
     assert len(source.calls) == 1
 
 
 # ---------------------------------------------------------------------------
-# Strict coverage
+# Observed-subset coverage
 # ---------------------------------------------------------------------------
 
 
-def test_a_session_without_an_observation_fails_closed_and_stores_nothing() -> None:
-    store = Store()
+def test_every_session_with_a_candle_reports_nothing_missing() -> None:
+    result, _, _, _ = _run()
 
-    with pytest.raises(OptionDailySessionCoverageError) as raised:
-        _run(source=Source((_observation(_DAYS[0]), _observation(_DAYS[2]))), store=store)
+    assert result.missing_trading_dates == ()
+    assert result.daily_bar_count + len(result.missing_trading_dates) == result.session_count
 
-    assert raised.value.missing_trading_dates == (_DAYS[1],)
-    assert raised.value.unexpected_trading_dates == ()
-    assert raised.value.contract == _CONTRACT
-    assert "2026-10-06" in str(raised.value)
-    assert store.batches == []
+
+def test_a_session_without_a_provider_candle_is_reported_not_fabricated() -> None:
+    result, _, source, store = _run(source=Source((_observation(_DAYS[0]), _observation(_DAYS[2]))))
+
+    assert result == OptionDailyAcquisitionResult(_query(), 3, 2, (_DAYS[1],))
+    assert len(source.calls) == 1
+    assert len(store.batches) == 1
+    assert [bar.point_in_time for bar in store.batches[0]] == [
+        _session(_DAYS[0]).closes_at,
+        _session(_DAYS[2]).closes_at,
+    ]
+
+
+def test_several_missing_sessions_are_reported_ascending() -> None:
+    days = tuple(date(2026, 10, day) for day in (5, 6, 7, 8, 9))
+    resolver = Resolver(tuple(_session(day) for day in days))
+    source = Source((_observation(days[2]),))
+
+    result, _, _, store = _run(resolver=resolver, source=source, query=_query(days[0], days[-1]))
+
+    assert result.missing_trading_dates == (days[0], days[1], days[3], days[4])
+    assert (result.session_count, result.daily_bar_count) == (5, 1)
+    assert [bar.point_in_time for bar in store.batches[0]] == [_session(days[2]).closes_at]
+
+
+def test_a_range_with_no_candle_succeeds_with_every_session_missing() -> None:
+    result, _, _, store = _run(source=Source(()))
+
+    assert result == OptionDailyAcquisitionResult(_query(), 3, 0, _DAYS)
+    assert store.batches == [()]
+
+
+def test_missing_sessions_are_disjoint_from_the_stored_bars() -> None:
+    result, _, _, store = _run(source=Source((_observation(_DAYS[1]),)))
+
+    stored = {bar.point_in_time for bar in store.batches[0]}
+    missing = {_session(day).closes_at for day in result.missing_trading_dates}
+    assert stored == {_session(_DAYS[1]).closes_at}
+    assert not stored & missing
+    assert result.missing_trading_dates == (_DAYS[0], _DAYS[2])
 
 
 def test_an_observation_outside_the_resolved_sessions_fails_closed() -> None:
@@ -195,6 +232,20 @@ def test_an_observation_outside_the_resolved_sessions_fails_closed() -> None:
 
     with pytest.raises(OptionDailySessionCoverageError) as raised:
         _run(resolver=Resolver(sessions), store=store)
+
+    assert raised.value.unexpected_trading_dates == (_DAYS[1],)
+    assert raised.value.missing_trading_dates == ()
+    assert raised.value.contract == _CONTRACT
+    assert "2026-10-06" in str(raised.value)
+    assert store.batches == []
+
+
+def test_a_non_session_candle_fails_even_when_sessions_lack_candles() -> None:
+    sessions = (_session(_DAYS[0]), _session(_DAYS[2]))
+    store = Store()
+
+    with pytest.raises(OptionDailySessionCoverageError) as raised:
+        _run(resolver=Resolver(sessions), source=Source((_observation(_DAYS[1]),)), store=store)
 
     assert raised.value.unexpected_trading_dates == (_DAYS[1],)
     assert store.batches == []
@@ -207,11 +258,27 @@ def test_an_observation_outside_the_requested_range_is_a_contract_violation() ->
         _run(source=source)
 
 
+def test_an_out_of_range_observation_fails_even_when_sessions_lack_candles() -> None:
+    store = Store()
+
+    with pytest.raises(OptionHistoricalDataContractViolationError, match="outside the requested"):
+        _run(source=Source((_observation(date(2026, 10, 8)),)), store=store)
+    assert store.batches == []
+
+
 def test_a_duplicate_observation_is_a_contract_violation() -> None:
     source = Source((*(_observation(day) for day in _DAYS), _observation(_DAYS[0])))
 
     with pytest.raises(OptionHistoricalDataContractViolationError, match="more than one candle"):
         _run(source=source)
+
+
+def test_a_duplicate_observation_fails_even_when_other_sessions_lack_candles() -> None:
+    store = Store()
+
+    with pytest.raises(OptionHistoricalDataContractViolationError, match="more than one candle"):
+        _run(source=Source((_observation(_DAYS[0]), _observation(_DAYS[0]))), store=store)
+    assert store.batches == []
 
 
 @pytest.mark.parametrize(
@@ -274,12 +341,27 @@ def test_a_store_conflict_propagates_unwrapped() -> None:
     assert raised.value is conflict
 
 
+def test_a_store_conflict_on_a_partial_range_propagates_unwrapped() -> None:
+    conflict = OptionHistoricalMarketDataConflictError("already stored differently")
+
+    with pytest.raises(OptionHistoricalMarketDataConflictError) as raised:
+        _run(source=Source((_observation(_DAYS[2]),)), store=Store(error=conflict))
+
+    assert raised.value is conflict
+
+
 @pytest.mark.parametrize("result", [2, True, "3", None.__class__])
 def test_a_store_misreporting_its_count_is_a_contract_violation(result) -> None:
     store = Store(result=result)
 
     with pytest.raises(OptionHistoricalDataContractViolationError, match="store"):
         _run(store=store)
+
+
+@pytest.mark.parametrize("result", [1, False, None.__class__])
+def test_a_store_misreporting_an_empty_batch_is_a_contract_violation(result) -> None:
+    with pytest.raises(OptionHistoricalDataContractViolationError, match="store"):
+        _run(source=Source(()), store=Store(result=result))
 
 
 # ---------------------------------------------------------------------------
@@ -304,11 +386,44 @@ def test_the_query_must_be_an_option_daily_acquisition_query() -> None:
 
 
 @pytest.mark.parametrize(
-    ("sessions", "bars"), [(2, 3), (-1, 0), (True, 0)], ids=["more-bars", "negative", "bool"]
+    ("sessions", "bars", "missing"),
+    [
+        (2, 3, ()),
+        (-1, 0, ()),
+        (True, 0, ()),
+        (3, 2, ()),
+        (3, 3, (_DAYS[0],)),
+        (3, 1, [_DAYS[0], _DAYS[1]]),
+        (3, 1, (_DAYS[1], _DAYS[0])),
+        (3, 1, (_DAYS[0], _DAYS[0])),
+        (3, 2, (date(2026, 10, 8),)),
+        (3, 2, (date(2026, 10, 4),)),
+        (3, 2, ("2026-10-05",)),
+        (3, 2, (datetime(2026, 10, 5),)),
+    ],
+    ids=[
+        "more-bars",
+        "negative",
+        "bool",
+        "uncounted-session",
+        "overcounted-session",
+        "list",
+        "descending",
+        "duplicate",
+        "after-range",
+        "before-range",
+        "text",
+        "datetime",
+    ],
 )
-def test_an_inconsistent_result_is_rejected(sessions, bars) -> None:
+def test_an_inconsistent_result_is_rejected(sessions, bars, missing) -> None:
     with pytest.raises((TypeError, ValueError)):
-        OptionDailyAcquisitionResult(_query(), sessions, bars)
+        OptionDailyAcquisitionResult(_query(), sessions, bars, missing)
+
+
+def test_the_missing_dates_are_a_required_field() -> None:
+    with pytest.raises(TypeError):
+        OptionDailyAcquisitionResult(_query(), 3, 3)  # type: ignore[call-arg]
 
 
 def test_the_use_case_and_errors_are_exported() -> None:
