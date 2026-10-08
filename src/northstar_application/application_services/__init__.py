@@ -159,6 +159,11 @@ from northstar_application.application_services.get_futures_paper_trading_snapsh
     FuturesPaperTradingSnapshot,
     GetFuturesPaperTradingSnapshotUseCase,
 )
+from northstar_application.application_services.get_option_contract_economics import (
+    GetOptionContractEconomicsUseCase,
+    OptionContractEconomicsContractViolationError,
+    OptionContractEconomicsNotFoundError,
+)
 from northstar_application.application_services.historical_snapshot_evaluator import (
     HistoricalSnapshotEvaluatorService,
 )
@@ -382,4 +387,7 @@ __all__ = [
     "FuturesContractEconomicsContractViolationError",
     "FuturesContractEconomicsNotFoundError",
     "ValueFuturesPaperPortfolioUseCase",
+    "GetOptionContractEconomicsUseCase",
+    "OptionContractEconomicsContractViolationError",
+    "OptionContractEconomicsNotFoundError",
 ]
