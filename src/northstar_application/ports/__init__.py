@@ -97,6 +97,12 @@ from northstar_application.ports.option_contract_economics_store import (
     OptionContractEconomicsConflictError,
     OptionContractEconomicsStore,
 )
+from northstar_application.ports.option_expiration_resolver import (
+    InvalidResolvedOptionExpirationError,
+    OptionExpirationResolutionError,
+    OptionExpirationResolver,
+    ResolvedOptionExpiration,
+)
 from northstar_application.ports.paper_fill_repository import (
     InvalidPaperFillQueryError,
     PaperFillQuery,
@@ -167,6 +173,10 @@ __all__ = [
     "OptionContractEconomicsConflictError",
     "OptionContractEconomicsRepository",
     "OptionContractEconomicsStore",
+    "InvalidResolvedOptionExpirationError",
+    "OptionExpirationResolutionError",
+    "OptionExpirationResolver",
+    "ResolvedOptionExpiration",
     "InvalidPaperFillQueryError",
     "PaperFillConflictError",
     "PaperFillQuery",
