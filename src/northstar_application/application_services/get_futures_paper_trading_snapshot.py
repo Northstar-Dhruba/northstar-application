@@ -315,6 +315,9 @@ class GetFuturesPaperTradingSnapshotUseCase:
                 raise TypeError(f"{_SUBJECT} {name} must be a {expected.__name__}.")
 
         # Validates the complete history, including the one-strategy invariant, first.
+        # It is read once: the portfolio, the visible execution and the valuation
+        # all come from these records, so a daily write committing meanwhile
+        # cannot make them describe different persisted states.
         orders, fills = _load_history(
             self._order_repository, self._fill_repository, portfolio_identity, strategy_identity
         )
@@ -327,8 +330,8 @@ class GetFuturesPaperTradingSnapshotUseCase:
         visible_fills = tuple(f for f in fills if _visible(f.filled_at, available_through))
 
         try:
-            valuation = self._valuation.execute(
-                portfolio_identity, strategy_identity, available_through
+            valuation = self._valuation.value_history(
+                portfolio_identity, strategy_identity, fills, available_through
             )
             missing = None
         except FuturesContractEconomicsNotFoundError as error:
