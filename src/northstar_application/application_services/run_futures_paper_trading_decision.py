@@ -234,8 +234,13 @@ def _load_history(
     strategy_identity: StrategyIdentity,
 ) -> tuple[tuple[FuturesPaperOrder, ...], tuple[FuturesPaperFill, ...]]:
     """Load one portfolio's orders and fills and require one strategy's coherent history."""
-    orders = _load_orders(order_repository, portfolio_identity)
+    # Fills first: a fill is only ever stored after its order and nothing is
+    # deleted, so every fill read here still has its order in the later read,
+    # even when a writer commits in between. The reverse order could read a
+    # fill whose order it had not loaded. Under the operations lock nothing
+    # commits in between, so writers see exactly the same history either way.
     fills = _load_fills(fill_repository, portfolio_identity)
+    orders = _load_orders(order_repository, portfolio_identity)
     for order in orders:
         if order.intent.strategy_identity != strategy_identity:
             raise FuturesPaperPortfolioStrategyConflictError(

@@ -691,6 +691,140 @@ def test_a_misbehaving_economics_repository_still_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# One persisted state: a daily write committing between the snapshot's reads
+# ---------------------------------------------------------------------------
+
+
+class _Interleaving:
+    """Commit ``write`` once, right after the ``nth`` trading-history read.
+
+    Every repository call is its own read, so a concurrent daily write can
+    commit between any two of them. This makes one such interleaving exact:
+    no thread, no sleep, no scheduling luck.
+    """
+
+    def __init__(self, world: World, write, *, nth: int = 1, of=("orders", "fills")) -> None:
+        self.world, self.write, self.nth, self.of = world, write, nth, of
+        self.reads: list[str] = []
+        self.counted = 0
+
+    def read(self, name: str) -> None:
+        self.reads.append(name)
+        if name in self.of:
+            self.counted += 1
+            if self.counted == self.nth:
+                self.write(self.world)
+
+
+class _InterleavedOrders(Orders):
+    def __init__(self, world: World, interleaving: _Interleaving) -> None:
+        super().__init__(world)
+        self.interleaving = interleaving
+
+    def get_orders(self, query):
+        orders = super().get_orders(query)
+        self.interleaving.read("orders")
+        return orders
+
+
+class _InterleavedFills(Fills):
+    def __init__(self, world: World, interleaving: _Interleaving) -> None:
+        super().__init__(world)
+        self.interleaving = interleaving
+
+    def get_fills(self, query):
+        fills = super().get_fills(query)
+        self.interleaving.read("fills")
+        return fills
+
+
+def _interleaved_snapshot(world: World, through: PointInTime, interleaving: _Interleaving):
+    return GetFuturesPaperTradingSnapshotUseCase(
+        market_repository=Market(world),
+        forward_repository=Forward(world),
+        order_repository=_InterleavedOrders(world, interleaving),
+        fill_repository=_InterleavedFills(world, interleaving),
+        economics_repository=Economics(world),
+    ).execute(_ES_DEC, _ALPHA, _PORTFOLIO, through)
+
+
+def _pending_buy(world: World) -> tuple[FuturesPaperOrder, FuturesPaperFill]:
+    """A BUY decided at session 1, pending; its next-open fill at session 2 is not stored yet."""
+    order = _order("o-buy", _ES_DEC, OrderSide.BUY, 1, _at(1))
+    _trade(world, order, None)
+    return order, _fill(order, "100", _at(2))
+
+
+def _store(world: World, *facts) -> None:
+    for fact in facts:
+        target = world.orders if isinstance(fact, FuturesPaperOrder) else world.fills
+        target[fact.identity.identity] = fact
+
+
+def test_a_fill_committed_after_the_fill_read_cannot_split_portfolio_and_valuation() -> None:
+    """The reproduced dashboard defect, made deterministic.
+
+    The fill commits after the snapshot has loaded fills and built its portfolio.
+    The valuation must value that same portfolio, not a newer history.
+    """
+    before = World(_bar(3, "105"))
+    _pending_buy(before)
+    world = World(_bar(3, "105"))
+    _, fill = _pending_buy(world)
+    interleaving = _Interleaving(world, lambda w: _store(w, fill), of=("fills",))
+
+    snapshot = _interleaved_snapshot(world, _at(3), interleaving)
+
+    assert snapshot.valuation.portfolio == snapshot.portfolio
+    assert snapshot == _snapshot(before, _at(3))  # the state that the first read observed
+    assert snapshot.portfolio.positions == ()
+    assert [o.identity.identity for o in snapshot.pending_orders] == ["o-buy"]
+
+
+def test_an_order_and_fill_committed_between_the_reads_never_orphan_the_fill() -> None:
+    """A fill is stored only after its order, so reading fills first never orphans one."""
+    world = World(_bar(3, "105"))
+    order = _order("o-buy", _ES_DEC, OrderSide.BUY, 1, _at(1))
+    fill = _fill(order, "100", _at(2))
+    interleaving = _Interleaving(world, lambda w: _store(w, order, fill))
+
+    snapshot = _interleaved_snapshot(world, _at(3), interleaving)
+
+    assert snapshot.valuation.portfolio == snapshot.portfolio
+    assert snapshot.portfolio.positions == ()
+    assert all(f == fill for f in snapshot.fills)
+    assert all(f.order_identity in {o.identity for o in snapshot.orders} for f in snapshot.fills)
+
+
+@pytest.mark.parametrize("nth", [1, 2, 3, 4, 5])
+def test_a_write_after_any_history_read_keeps_one_coherent_portfolio(nth: int) -> None:
+    """The next session -- fill the pending BUY, then a new pending SELL -- at every point."""
+    world = World(_bar(3, "105"))
+    _, fill = _pending_buy(world)
+    sell = _order("o-sell", _ES_DEC, OrderSide.SELL, 2, _at(2))
+    interleaving = _Interleaving(world, lambda w: _store(w, fill, sell), nth=nth)
+    pre, post = World(_bar(3, "105")), World(_bar(3, "105"))
+    _pending_buy(pre)
+    _pending_buy(post)
+    _store(post, fill, sell)
+
+    snapshot = _interleaved_snapshot(world, _at(3), interleaving)
+
+    assert snapshot.valuation.portfolio == snapshot.portfolio
+    assert snapshot.portfolio in [_snapshot(w, _at(3)).portfolio for w in (pre, post)]
+
+
+def test_the_snapshot_reads_the_trading_history_once() -> None:
+    world = _daily(World(*_phase_a()), 28)
+    interleaving = _Interleaving(world, lambda w: None, nth=0)
+
+    snapshot = _interleaved_snapshot(world, _at(28), interleaving)
+
+    assert interleaving.reads == ["fills", "orders"]
+    assert snapshot == _snapshot(world, _at(28))
+
+
+# ---------------------------------------------------------------------------
 # Read only
 # ---------------------------------------------------------------------------
 

@@ -28,6 +28,7 @@ from northstar_core.derivatives import QuoteValue
 from northstar_core.foundation.value_objects import Currency, Money, PointInTime
 from northstar_core.futures import FuturesContract, FuturesContractEconomics
 from northstar_core.paper_trading import (
+    FuturesPaperFill,
     FuturesPaperPortfolio,
     FuturesPosition,
     PaperPortfolioIdentity,
@@ -202,6 +203,20 @@ class FuturesPaperTradingValuation:
         return len(self.portfolio.positions)
 
 
+def _require_identities(
+    portfolio_identity: PaperPortfolioIdentity,
+    strategy_identity: StrategyIdentity,
+    available_through: PointInTime,
+) -> None:
+    for name, value, expected in (
+        ("portfolio identity", portfolio_identity, PaperPortfolioIdentity),
+        ("strategy identity", strategy_identity, StrategyIdentity),
+        ("available-through", available_through, PointInTime),
+    ):
+        if not isinstance(value, expected):
+            raise TypeError(f"{_SUBJECT} {name} must be a {expected.__name__}.")
+
+
 def _combine(
     realized: FuturesContractRealizedPnl, unrealized: FuturesContractUnrealizedPnl | None
 ) -> FuturesContractPnl:
@@ -257,17 +272,27 @@ class BuildFuturesPaperTradingValuationUseCase:
         available_through: PointInTime,
     ) -> FuturesPaperTradingValuation:
         """Return the portfolio's gross simulated P&L per contract at the cutoff."""
-        for name, value, expected in (
-            ("portfolio identity", portfolio_identity, PaperPortfolioIdentity),
-            ("strategy identity", strategy_identity, StrategyIdentity),
-            ("available-through", available_through, PointInTime),
-        ):
-            if not isinstance(value, expected):
-                raise TypeError(f"{_SUBJECT} {name} must be a {expected.__name__}.")
-
+        _require_identities(portfolio_identity, strategy_identity, available_through)
         _, fills = _load_history(
             self._order_repository, self._fill_repository, portfolio_identity, strategy_identity
         )
+        return self.value_history(portfolio_identity, strategy_identity, fills, available_through)
+
+    def value_history(
+        self,
+        portfolio_identity: PaperPortfolioIdentity,
+        strategy_identity: StrategyIdentity,
+        fills: tuple[FuturesPaperFill, ...],
+        available_through: PointInTime,
+    ) -> FuturesPaperTradingValuation:
+        """Value a complete history the caller already loaded and validated.
+
+        ``fills`` must be the portfolio's complete fills as returned by the
+        history loader. A caller that also reports that history -- the
+        operational snapshot -- values exactly the records it shows, so a write
+        committed after its read cannot split its portfolio from its valuation.
+        """
+        _require_identities(portfolio_identity, strategy_identity, available_through)
         portfolio = self._build_portfolio.execute(
             portfolio_identity, strategy_identity, fills, available_through
         )
