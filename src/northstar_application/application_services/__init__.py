@@ -155,6 +155,13 @@ from northstar_application.application_services.futures_daily_bar_finality_polic
     InvalidFuturesDailyBarFinalityPolicyError,
     OperatorApprovedFuturesDailyBarFinalityPolicy,
 )
+from northstar_application.application_services.futures_daily_candle_identity import (
+    FUTURES_DAILY_CANDLE_FINGERPRINT_PREFIX,
+    FUTURES_DAILY_CANDLE_IDENTITY_FORMAT,
+    InvalidFuturesDailyCandleIdentityError,
+    canonical_futures_daily_candle_identity,
+    futures_daily_candle_fingerprint,
+)
 from northstar_application.application_services.futures_expiry_flatten_guard import (
     FuturesExpiryFlattenGuard,
     FuturesExpiryFlattenPolicy,
@@ -351,6 +358,11 @@ __all__ = [
     "DisabledFuturesDailyBarFinalityPolicy",
     "InvalidFuturesDailyBarFinalityPolicyError",
     "OperatorApprovedFuturesDailyBarFinalityPolicy",
+    "FUTURES_DAILY_CANDLE_FINGERPRINT_PREFIX",
+    "FUTURES_DAILY_CANDLE_IDENTITY_FORMAT",
+    "InvalidFuturesDailyCandleIdentityError",
+    "canonical_futures_daily_candle_identity",
+    "futures_daily_candle_fingerprint",
     "FuturesExpiryFlattenGuard",
     "FuturesExpiryFlattenPolicy",
     "FuturesExpiryWindowAssessment",
