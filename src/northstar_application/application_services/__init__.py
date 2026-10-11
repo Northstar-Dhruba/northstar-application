@@ -150,6 +150,15 @@ from northstar_application.application_services.freeze_futures_forward_research_
 from northstar_application.application_services.futures_analysis_result import (
     FuturesAnalysisResult,
 )
+from northstar_application.application_services.futures_candle_approvals import (
+    FuturesCandleApproval,
+    FuturesCandleApprovalError,
+    FuturesCandleApprovalMismatchError,
+    FuturesCandleApprovalMissingError,
+    FuturesCandleApprovalSet,
+    InvalidFuturesCandleApprovalSetError,
+    parse_futures_candle_approval_manifest,
+)
 from northstar_application.application_services.futures_daily_bar_finality_policies import (
     DisabledFuturesDailyBarFinalityPolicy,
     InvalidFuturesDailyBarFinalityPolicyError,
@@ -363,6 +372,13 @@ __all__ = [
     "InvalidFuturesDailyCandleIdentityError",
     "canonical_futures_daily_candle_identity",
     "futures_daily_candle_fingerprint",
+    "FuturesCandleApproval",
+    "FuturesCandleApprovalError",
+    "FuturesCandleApprovalMismatchError",
+    "FuturesCandleApprovalMissingError",
+    "FuturesCandleApprovalSet",
+    "InvalidFuturesCandleApprovalSetError",
+    "parse_futures_candle_approval_manifest",
     "FuturesExpiryFlattenGuard",
     "FuturesExpiryFlattenPolicy",
     "FuturesExpiryWindowAssessment",
