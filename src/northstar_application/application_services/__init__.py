@@ -8,6 +8,7 @@ from northstar_application.application_services.acquire_futures_daily_history im
 from northstar_application.application_services.acquire_futures_native_daily_history import (
     AcquireFuturesNativeDailyHistoryUseCase,
     FuturesDailySessionCoverageError,
+    FuturesReviewedCandleVerification,
 )
 from northstar_application.application_services.acquire_option_native_daily_history import (
     AcquireOptionNativeDailyHistoryUseCase,
@@ -336,6 +337,7 @@ __all__ = [
     "AcquireFuturesDailyHistoryUseCase",
     "AcquireFuturesNativeDailyHistoryUseCase",
     "FuturesDailySessionCoverageError",
+    "FuturesReviewedCandleVerification",
     "AggregateFuturesDailySessionBarUseCase",
     "BuildPaperPortfolioUseCase",
     "FuturesDailyAcquisitionResult",
