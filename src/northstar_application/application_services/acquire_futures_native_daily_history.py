@@ -40,10 +40,37 @@ anything is written, so a single batch is all-or-nothing at no cost: an invalid
 range stores nothing. A rerun of a stored range is an idempotent success under
 the store's semantics, and a differing value under an existing key is a
 conflict that propagates unwrapped.
+
+Reviewed candles
+----------------
+A caller may require that every candle is the exact version an operator
+reviewed, by passing FuturesReviewedCandleVerification. That object is the
+explicit choice and always carries an approval set, so reviewed mode can
+never run without one; an empty set approves nothing and refuses every
+session. Two checks then run, and neither can be skipped:
+
+- after the sessions are resolved and before the provider is asked, every
+  resolved session must have an approved fingerprint
+  (FuturesCandleApprovalMissingError names every one that does not);
+- after the existing structure and coverage checks have built every bar, and
+  before the one store call, each bar's fdc1 fingerprint must equal its
+  approved one (FuturesCandleApprovalMismatchError names every one that
+  differs).
+
+The bars that are fingerprinted are the very tuple passed to the store, and
+no provider is asked twice, so nothing can change between the check and the
+write. Any failure stores nothing. A bar already stored is still checked,
+because the fetched candle is verified before the store compares it with
+what it holds.
+
+Without that object the use case behaves exactly as before. That keeps the
+existing callers unchanged until their own reviewed-mode integration; it is
+not by itself a guarantee that no caller can acquire unreviewed candles.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 
 from northstar_core.foundation.value_objects import Timeframe
@@ -52,6 +79,13 @@ from northstar_core.futures import FuturesContract, FuturesOHLCVBar, InvalidFutu
 from northstar_application.application_services.acquire_futures_daily_history import (
     FuturesDailyAcquisitionResult,
     FuturesHistoricalDataContractViolationError,
+)
+from northstar_application.application_services.futures_candle_approvals import (
+    FuturesCandleApprovalSet,
+    InvalidFuturesCandleApprovalSetError,
+)
+from northstar_application.application_services.futures_daily_candle_identity import (
+    futures_daily_candle_fingerprint,
 )
 from northstar_application.ports import (
     FuturesDailyHistoricalAcquisitionQuery,
@@ -106,6 +140,23 @@ class FuturesDailySessionCoverageError(ValueError):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FuturesReviewedCandleVerification:
+    """The explicit choice to accept only operator-reviewed candle versions.
+
+    It cannot exist without an approval set, so selecting reviewed mode always
+    supplies one. An empty set is still a set: it approves nothing.
+    """
+
+    approvals: FuturesCandleApprovalSet
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.approvals, FuturesCandleApprovalSet):
+            raise InvalidFuturesCandleApprovalSetError(
+                "Reviewed candle verification requires a FuturesCandleApprovalSet."
+            )
+
+
 class AcquireFuturesNativeDailyHistoryUseCase:
     """Acquire, session-stamp and persist one contract's native daily candles."""
 
@@ -114,6 +165,8 @@ class AcquireFuturesNativeDailyHistoryUseCase:
         session_resolver: FuturesTradingSessionResolver,
         source: FuturesNativeDailyMarketDataSource,
         store: FuturesHistoricalMarketDataStore,
+        *,
+        reviewed_candles: FuturesReviewedCandleVerification | None = None,
     ) -> None:
         if not isinstance(session_resolver, FuturesTradingSessionResolver):
             raise TypeError(
@@ -130,10 +183,19 @@ class AcquireFuturesNativeDailyHistoryUseCase:
                 "AcquireFuturesNativeDailyHistoryUseCase store "
                 "must be a FuturesHistoricalMarketDataStore."
             )
+        if reviewed_candles is not None and not isinstance(
+            reviewed_candles, FuturesReviewedCandleVerification
+        ):
+            # A bare approval set is refused: enforcement is never implied.
+            raise TypeError(
+                "AcquireFuturesNativeDailyHistoryUseCase reviewed_candles "
+                "must be a FuturesReviewedCandleVerification or None."
+            )
 
         self._session_resolver = session_resolver
         self._source = source
         self._store = store
+        self._reviewed = reviewed_candles
 
     def execute(
         self, query: FuturesDailyHistoricalAcquisitionQuery
@@ -154,6 +216,9 @@ class AcquireFuturesNativeDailyHistoryUseCase:
             query.start_trading_date,
             query.end_trading_date,
         )
+        if self._reviewed is not None:
+            _require_approvals(self._reviewed.approvals, query.contract, sessions)
+
         observations = self._source.fetch_daily_observations(
             query.contract,
             query.start_trading_date,
@@ -170,6 +235,10 @@ class AcquireFuturesNativeDailyHistoryUseCase:
             _daily_bar(query.contract, session, by_date[session.trading_date])
             for session in sessions
         )
+
+        if self._reviewed is not None and bars:
+            # The same tuple is verified and then stored: nothing in between.
+            _verify_bars(self._reviewed.approvals, query.contract, sessions, bars)
 
         if bars:
             self._persist(bars)
@@ -279,3 +348,35 @@ def _daily_bar(
             f"FuturesNativeDailyMarketDataSource returned an incoherent candle for "
             f"{contract} session {session.trading_date.isoformat()}: {exc}"
         ) from exc
+
+
+def _require_approvals(
+    approvals: FuturesCandleApprovalSet,
+    contract: FuturesContract,
+    sessions: tuple[FuturesTradingSession, ...],
+) -> None:
+    """Require an approval for every resolved session before any provider request."""
+    if approvals.product != contract.product:
+        raise InvalidFuturesCandleApprovalSetError(
+            f"The candle approval set is for {approvals.product}, not {contract.product}."
+        )
+    if sessions:
+        approvals.require_approvals(contract, (session.trading_date for session in sessions))
+
+
+def _verify_bars(
+    approvals: FuturesCandleApprovalSet,
+    contract: FuturesContract,
+    sessions: tuple[FuturesTradingSession, ...],
+    bars: tuple[FuturesOHLCVBar, ...],
+) -> None:
+    """Require every bar about to be stored to be its session's approved version."""
+    approvals.verify_fingerprints(
+        contract,
+        {
+            session.trading_date: futures_daily_candle_fingerprint(
+                contract, session.trading_date, bar
+            )
+            for session, bar in zip(sessions, bars, strict=True)
+        },
+    )
