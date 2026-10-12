@@ -86,9 +86,12 @@ from northstar_application.ports.futures_trade_recommendation_repository import 
     InvalidFuturesTradeRecommendationQueryError,
 )
 from northstar_application.ports.futures_trade_recommendation_store import (
+    FuturesTradeRecommendationConfigurationConflictError,
     FuturesTradeRecommendationConflictError,
     FuturesTradeRecommendationExclusivityError,
     FuturesTradeRecommendationStore,
+    InvalidFuturesTradeRecommendationRecordingError,
+    validate_futures_trade_recommendation_recording,
 )
 from northstar_application.ports.futures_trading_session_resolver import (
     FuturesSessionResolutionError,
@@ -260,4 +263,7 @@ __all__ = [
     "FuturesTradeRecommendationConflictError",
     "FuturesTradeRecommendationExclusivityError",
     "FuturesTradeRecommendationStore",
+    "FuturesTradeRecommendationConfigurationConflictError",
+    "InvalidFuturesTradeRecommendationRecordingError",
+    "validate_futures_trade_recommendation_recording",
 ]
