@@ -71,6 +71,23 @@ because they establish which research is the session's. A new profile or policy
 version is a new identity, needs VERIFIED history, and remains subject to F-4's
 one open recommendation per product.
 
+Two attempts can race: both find the identity absent, both generate, and the
+first to record wins. The loser's store refuses its definition -- it differs,
+at least in issuance time -- with FuturesTradeRecommendationConflictError. Only
+that error is reconciled: every identity of the batch is re-read, and each
+stored recommendation must be exactly the expected one -- same identity, same
+contract and research source (timeframe, decision instant, strategy), same
+policy version, and the identity derived from that source under this profile.
+Only then are the winners returned, unchanged, as ``existing``; the loser's
+own definitions are discarded and nothing is recorded twice. A missing or
+mismatching winner raises. A configuration-version conflict and a product
+exclusivity conflict are never reconciled: they propagate.
+
+The F-2 definition carries no profile contents, so a winner's configuration
+equality rests on the identity's binding to the profile version and on the
+store's durable version registry (F-5B-1B), which refuses a version reused with
+different contents.
+
 The issuance instant is captured once by the caller and used for the whole
 operation. This use case reads no clock.
 
@@ -392,7 +409,7 @@ class GenerateFuturesTradeRecommendationsUseCase:
             candidate.source: self._identities.identity(candidate.source, profile)
             for candidate in selection.candidates
         }
-        existing = self._existing(identities, policy)
+        existing = self._existing(identities, policy, profile)
         already_recorded = {recommendation.source for recommendation in existing}
         to_generate = FuturesCandidateSelection.select(
             criteria,
@@ -455,7 +472,9 @@ class GenerateFuturesTradeRecommendationsUseCase:
                 for proposal in generation.proposals
             )
             if recorded:
-                self._record(recorded)
+                winners = self._record(recorded, identities, policy, profile)
+                if winners:
+                    recorded, existing = (), existing + winners
 
         return FuturesTradeRecommendationGenerationResult(
             contract=contract,
@@ -729,8 +748,41 @@ class GenerateFuturesTradeRecommendationsUseCase:
 
     # -- recorded recommendations ---------------------------------------------------------
 
-    def _record(self, recommendations: tuple[FuturesTradeRecommendation, ...]) -> None:
-        accepted = self._store.record(recommendations)
+    def _record(
+        self,
+        recommendations: tuple[FuturesTradeRecommendation, ...],
+        identities: dict[FuturesResearchDecisionReference, FuturesTradeRecommendationIdentity],
+        policy: FuturesRecommendationGenerationPolicy,
+        profile: FuturesTradeRecommendationGenerationProfile,
+    ) -> tuple[FuturesTradeRecommendation, ...]:
+        """Record the batch; on a same-identity race, return the verified winners.
+
+        Returns () when this batch was recorded. When the store reports that an
+        identity is already recorded differently, every identity of the batch
+        is re-read and must be the expected recommendation; the stored winners
+        are returned in the batch's order and nothing of this batch is kept.
+        """
+        try:
+            accepted = self._store.record(recommendations, policy=policy, profile=profile)
+        except FuturesTradeRecommendationConflictError as conflict:
+            winners: list[FuturesTradeRecommendation] = []
+            for recommendation in recommendations:
+                stored = self._recommendations.get_recommendation(recommendation.identity)
+                if stored is None:
+                    raise FuturesTradeRecommendationConflictError(
+                        f"Recording {recommendation.identity} conflicted, but no recommendation "
+                        "is recorded under it."
+                    ) from conflict
+                winners.append(
+                    self._verify_recorded(
+                        stored,
+                        identities[recommendation.source],
+                        recommendation.source,
+                        policy,
+                        profile,
+                    )
+                )
+            return tuple(winners)
         if (
             not isinstance(accepted, int)
             or isinstance(accepted, bool)
@@ -740,29 +792,50 @@ class GenerateFuturesTradeRecommendationsUseCase:
                 f"The recommendation store accepted {accepted!r} of {len(recommendations)} "
                 "recommendations; recording must be all-or-nothing."
             )
+        return ()
+
+    def _verify_recorded(
+        self,
+        stored: object,
+        identity: FuturesTradeRecommendationIdentity,
+        source: FuturesResearchDecisionReference,
+        policy: FuturesRecommendationGenerationPolicy,
+        profile: FuturesTradeRecommendationGenerationProfile,
+    ) -> FuturesTradeRecommendation:
+        """Return ``stored`` only if it is the recommendation ``identity`` must name.
+
+        Issuance time, levels, validity and thesis are first-write-wins facts
+        and are not compared; everything that determines the identity is.
+        """
+        if not isinstance(stored, FuturesTradeRecommendation) or stored.identity != identity:
+            raise FuturesTradeRecommendationContractViolationError(
+                f"The recommendation repository answered {identity} with another value."
+            )
+        if (
+            stored.contract != source.contract
+            or stored.source != source
+            or stored.policy_version != policy.version
+            or self._identities.identity(stored.source, profile) != identity
+        ):
+            raise FuturesTradeRecommendationConflictError(
+                f"Recommendation {identity} is recorded for {stored.source} under "
+                f"{stored.policy_version}, not {source} under {policy.version} and profile "
+                f"{profile.version}."
+            )
+        return stored
 
     def _existing(
         self,
         identities: dict[FuturesResearchDecisionReference, FuturesTradeRecommendationIdentity],
         policy: FuturesRecommendationGenerationPolicy,
+        profile: FuturesTradeRecommendationGenerationProfile,
     ) -> tuple[FuturesTradeRecommendation, ...]:
         found: list[FuturesTradeRecommendation] = []
         for source, identity in identities.items():
             recorded = self._recommendations.get_recommendation(identity)
             if recorded is None:
                 continue
-            if not isinstance(recorded, FuturesTradeRecommendation) or (
-                recorded.identity != identity
-            ):
-                raise FuturesTradeRecommendationContractViolationError(
-                    f"The recommendation repository answered {identity} with another value."
-                )
-            if recorded.source != source or recorded.policy_version != policy.version:
-                raise FuturesTradeRecommendationConflictError(
-                    f"Recommendation {identity} is recorded for {recorded.source} under "
-                    f"{recorded.policy_version}, not {source} under {policy.version}."
-                )
-            found.append(recorded)
+            found.append(self._verify_recorded(recorded, identity, source, policy, profile))
         return tuple(found)
 
     def _open_lifecycles(

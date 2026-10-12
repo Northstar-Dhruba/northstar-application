@@ -3,17 +3,37 @@
 from __future__ import annotations
 
 import dataclasses
+import inspect
 from datetime import date
+from decimal import Decimal
 
 import pytest
-from northstar_core.derivatives import ExpirationDate
-from northstar_core.foundation.value_objects import ExchangeCode, PointInTime, Symbol
+from northstar_core.derivatives import ExpirationDate, QuoteValue
+from northstar_core.foundation.value_objects import ExchangeCode, PointInTime, Symbol, Timeframe
 from northstar_core.futures import FuturesContract, FuturesProductReference
+from northstar_core.recommendations.futures import (
+    EntryZone,
+    FuturesRecommendationGenerationPolicy,
+    FuturesResearchDecisionReference,
+    FuturesTradeRecommendation,
+    FuturesTradeRecommendationIdentity,
+    PriceTarget,
+    RecommendationPolicyVersion,
+    RecommendationValidity,
+    StopLoss,
+    TradeDirection,
+)
+from northstar_core.strategy import ExplanationReason, StrategyIdentity
 
 import northstar_application.ports as ports
+from northstar_application.application_services import (
+    FuturesTradeRecommendationGenerationProfile,
+    FuturesTradeRecommendationIdentityService,
+)
 from northstar_application.ports import (
     FuturesContractCutoff,
     FuturesContractCutoffSource,
+    FuturesTradeRecommendationConfigurationConflictError,
     FuturesTradeRecommendationConflictError,
     FuturesTradeRecommendationExclusivityError,
     FuturesTradeRecommendationQuery,
@@ -22,6 +42,8 @@ from northstar_application.ports import (
     FuturesTradingSession,
     InvalidFuturesContractCutoffError,
     InvalidFuturesTradeRecommendationQueryError,
+    InvalidFuturesTradeRecommendationRecordingError,
+    validate_futures_trade_recommendation_recording,
 )
 
 _NIFTY = FuturesProductReference(Symbol("NIFTY"), ExchangeCode("NSE"))
@@ -113,5 +135,148 @@ def test_public_exports() -> None:
         "FuturesTradeRecommendationConflictError",
         "FuturesTradeRecommendationExclusivityError",
         "FuturesTradeRecommendationStore",
+    ):
+        assert name in ports.__all__
+
+
+# -- the recording contract ------------------------------------------------------------
+
+_STRATEGY = StrategyIdentity("synthetic-directional-v1")
+_POLICY = FuturesRecommendationGenerationPolicy(
+    version=RecommendationPolicyVersion("f4-synthetic-fixture-v1"),
+    approved_strategies=(_STRATEGY,),
+    lookback_changes=19,
+    entry_multiplier=Decimal("0.25"),
+    stop_multiplier=Decimal("1.5"),
+    target_multiplier=Decimal("3"),
+    price_increment=Decimal("0.05"),
+    min_reward_to_risk=Decimal("1.5"),
+    short_enabled=True,
+)
+_PROFILE = FuturesTradeRecommendationGenerationProfile(
+    "f5a-synthetic-profile-v1", 5, _POLICY.version
+)
+
+
+def _recommendation(
+    *,
+    strategy: StrategyIdentity = _STRATEGY,
+    policy_version: RecommendationPolicyVersion = _POLICY.version,
+    identity: str | None = None,
+) -> FuturesTradeRecommendation:
+    source = FuturesResearchDecisionReference(
+        _OCT, Timeframe("1d"), PointInTime("2026-10-07T10:00:00Z"), strategy
+    )
+    derived = FuturesTradeRecommendationIdentityService().identity(source, _PROFILE)
+    return FuturesTradeRecommendation(
+        identity=FuturesTradeRecommendationIdentity(identity) if identity else derived,
+        contract=_OCT,
+        direction=TradeDirection.LONG,
+        entry=EntryZone(QuoteValue(Decimal("24378")), QuoteValue(Decimal("24388"))),
+        stop=StopLoss(QuoteValue(Decimal("24347.75"))),
+        target=PriceTarget(QuoteValue(Decimal("24448.45"))),
+        validity=RecommendationValidity(
+            PointInTime("2026-10-08T10:00:00Z"),
+            PointInTime("2026-10-14T10:00:00Z"),
+            PointInTime("2026-10-27T10:00:00Z"),
+        ),
+        source=source,
+        policy_version=policy_version,
+        issued_at=PointInTime("2026-10-07T12:00:00Z"),
+        thesis=(ExplanationReason("Synthetic thesis"),),
+    )
+
+
+def test_record_requires_policy_and_profile_by_keyword() -> None:
+    parameters = inspect.signature(FuturesTradeRecommendationStore.record).parameters
+
+    for name in ("policy", "profile"):
+        assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameters[name].default is inspect.Parameter.empty
+    assert list(parameters) == ["self", "recommendations", "policy", "profile"]
+
+
+def test_a_coherent_recording_request_is_accepted() -> None:
+    validate_futures_trade_recommendation_recording(
+        (_recommendation(),), policy=_POLICY, profile=_PROFILE
+    )
+    validate_futures_trade_recommendation_recording((), policy=_POLICY, profile=_PROFILE)
+
+
+@pytest.mark.parametrize(
+    "recommendations, policy, profile",
+    [
+        ([_recommendation()], _POLICY, _PROFILE),
+        (("recommendation",), _POLICY, _PROFILE),
+        ((), "policy", _PROFILE),
+        ((), _POLICY, "profile"),
+        (
+            (),
+            _POLICY,
+            FuturesTradeRecommendationGenerationProfile(
+                "p", 5, RecommendationPolicyVersion("f4-synthetic-fixture-v9")
+            ),
+        ),
+        (
+            (_recommendation(policy_version=RecommendationPolicyVersion("other")),),
+            _POLICY,
+            _PROFILE,
+        ),
+        ((_recommendation(strategy=StrategyIdentity("synthetic-other-v1")),), _POLICY, _PROFILE),
+        ((_recommendation(identity="not-derived"),), _POLICY, _PROFILE),
+    ],
+    ids=[
+        "list",
+        "not-a-recommendation",
+        "policy-type",
+        "profile-type",
+        "profile-for-another-policy",
+        "recommendation-under-another-policy",
+        "unapproved-strategy",
+        "identity-not-derived",
+    ],
+)
+def test_an_incoherent_recording_request_is_refused(
+    recommendations: object, policy: object, profile: object
+) -> None:
+    with pytest.raises(InvalidFuturesTradeRecommendationRecordingError):
+        validate_futures_trade_recommendation_recording(
+            recommendations,  # type: ignore[arg-type]
+            policy=policy,  # type: ignore[arg-type]
+            profile=profile,  # type: ignore[arg-type]
+        )
+
+
+def test_an_identity_derived_under_another_profile_is_refused() -> None:
+    other = FuturesTradeRecommendationGenerationProfile(
+        "f5a-synthetic-profile-v2", 5, _POLICY.version
+    )
+
+    with pytest.raises(InvalidFuturesTradeRecommendationRecordingError):
+        validate_futures_trade_recommendation_recording(
+            (_recommendation(),), policy=_POLICY, profile=other
+        )
+
+
+def test_a_configuration_conflict_is_never_a_same_identity_conflict() -> None:
+    """The race reconciliation catches only the latter; the former must escape it."""
+    assert not issubclass(
+        FuturesTradeRecommendationConfigurationConflictError,
+        FuturesTradeRecommendationConflictError,
+    )
+    assert not issubclass(
+        FuturesTradeRecommendationConflictError,
+        FuturesTradeRecommendationConfigurationConflictError,
+    )
+    assert not issubclass(
+        FuturesTradeRecommendationExclusivityError, FuturesTradeRecommendationConflictError
+    )
+
+
+def test_recording_contract_exports() -> None:
+    for name in (
+        "FuturesTradeRecommendationConfigurationConflictError",
+        "InvalidFuturesTradeRecommendationRecordingError",
+        "validate_futures_trade_recommendation_recording",
     ):
         assert name in ports.__all__

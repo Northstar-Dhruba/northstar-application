@@ -94,6 +94,7 @@ from northstar_application.ports import (
     FuturesHistoricalMarketDataQuery,
     FuturesHistoricalMarketDataRepository,
     FuturesSessionResolutionError,
+    FuturesTradeRecommendationConfigurationConflictError,
     FuturesTradeRecommendationConflictError,
     FuturesTradeRecommendationExclusivityError,
     FuturesTradeRecommendationQuery,
@@ -101,6 +102,8 @@ from northstar_application.ports import (
     FuturesTradeRecommendationStore,
     FuturesTradingSession,
     FuturesTradingSessionResolver,
+    InvalidFuturesTradeRecommendationRecordingError,
+    validate_futures_trade_recommendation_recording,
 )
 
 Block = FuturesTradeRecommendationBlockReason
@@ -309,7 +312,11 @@ class Recommendations(FuturesTradeRecommendationRepository, FuturesTradeRecommen
         self.recorded: dict[FuturesTradeRecommendationIdentity, FuturesTradeRecommendation] = {}
         self.extra = extra
         self.writes: list[tuple[FuturesTradeRecommendation, ...]] = []
+        self.received: list[tuple[object, object]] = []
         self.answer: int | None = None
+        # A test-only stand-in for the durable version registry of F-5B-1B.
+        self.policies: dict[RecommendationPolicyVersion, FuturesRecommendationGenerationPolicy] = {}
+        self.profiles: dict[str, FuturesTradeRecommendationGenerationProfile] = {}
 
     def get_recommendation(self, identity):
         if identity in self.recorded:
@@ -327,19 +334,33 @@ class Recommendations(FuturesTradeRecommendationRepository, FuturesTradeRecommen
             if lc.recommendation.contract.product == query.product
         )
 
-    def record(self, recommendations):
+    def record(self, recommendations, *, policy, profile):
+        validate_futures_trade_recommendation_recording(
+            recommendations, policy=policy, profile=profile
+        )
         self.writes.append(recommendations)
+        self.received.append((policy, profile))
+        if self.policies.get(policy.version, policy) != policy or (
+            self.profiles.get(profile.version, profile) != profile
+        ):
+            raise FuturesTradeRecommendationConfigurationConflictError(profile.version)
+        batch_products: set[FuturesProductReference] = set()
         for recommendation in recommendations:
+            product = recommendation.contract.product
             known = self.get_recommendation(recommendation.identity)
             if known is not None and known != recommendation:
                 raise FuturesTradeRecommendationConflictError(str(recommendation.identity))
-            if known is None and any(
-                not lc.is_terminal and lc.recommendation.identity != recommendation.identity
-                for lc in self.get_lifecycles(
-                    FuturesTradeRecommendationQuery(recommendation.contract.product)
+            if known is None and (
+                product in batch_products
+                or any(
+                    not lc.is_terminal and lc.recommendation.identity != recommendation.identity
+                    for lc in self.get_lifecycles(FuturesTradeRecommendationQuery(product))
                 )
             ):
                 raise FuturesTradeRecommendationExclusivityError(str(recommendation.contract))
+            batch_products.add(product)
+        self.policies[policy.version] = policy
+        self.profiles[profile.version] = profile
         for recommendation in recommendations:
             self.recorded[recommendation.identity] = recommendation
         return len(recommendations) if self.answer is None else self.answer
@@ -1175,11 +1196,295 @@ def test_research_for_another_contract_is_a_port_contract_violation() -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# The recording contract: exact policy and profile, store semantics
+# ---------------------------------------------------------------------------
+
+_T1 = PointInTime("2026-10-07T11:00:00Z")
+_T2 = PointInTime("2026-10-07T12:00:00Z")
+
+
+def _recorded(issued_at: PointInTime = _T1) -> FuturesTradeRecommendation:
+    """The recommendation one attempt records, from a fresh synthetic world."""
+    (recommendation,) = _run(_world(), issued_at=issued_at).recorded
+    return recommendation
+
+
+def _derived(
+    base: FuturesTradeRecommendation,
+    *,
+    contract: FuturesContract | None = None,
+    strategy: StrategyIdentity | None = None,
+    instant: PointInTime | None = None,
+    profile: FuturesTradeRecommendationGenerationProfile = _PROFILE,
+) -> FuturesTradeRecommendation:
+    """A variant of ``base`` whose identity is correctly derived from its new source."""
+    source = FuturesResearchDecisionReference(
+        contract or base.contract,
+        base.source.timeframe,
+        instant or base.source.decision_instant,
+        strategy or base.source.strategy_identity,
+    )
+    return dataclasses.replace(
+        base,
+        contract=source.contract,
+        source=source,
+        identity=FuturesTradeRecommendationIdentityService().identity(source, profile),
+    )
+
+
+def test_the_store_receives_the_exact_policy_and_profile() -> None:
+    world = _world()
+
+    _run(world)
+
+    ((policy, profile),) = world.recommendations.received
+    assert policy is _POLICY and profile is _PROFILE
+    assert profile.policy_version == policy.version
+    assert world.recommendations.writes[0][0].policy_version == policy.version
+
+
+def test_recording_an_equal_recommendation_again_is_idempotent() -> None:
+    store, recommendation = Recommendations(), _recorded()
+    store.record((recommendation,), policy=_POLICY, profile=_PROFILE)
+
+    assert store.record((recommendation,), policy=_POLICY, profile=_PROFILE) == 1
+    assert store.recorded == {recommendation.identity: recommendation}
+
+
+def test_a_different_definition_under_one_identity_is_a_conflict() -> None:
+    store = Recommendations()
+    store.record((_recorded(_T1),), policy=_POLICY, profile=_PROFILE)
+
+    with pytest.raises(FuturesTradeRecommendationConflictError):
+        store.record((_recorded(_T2),), policy=_POLICY, profile=_PROFILE)
+    assert next(iter(store.recorded.values())).issued_at == _T1
+
+
+def test_another_open_recommendation_on_the_product_is_exclusive() -> None:
+    store, first = Recommendations(), _recorded()
+    store.record((first,), policy=_POLICY, profile=_PROFILE)
+
+    with pytest.raises(FuturesTradeRecommendationExclusivityError):
+        store.record((_derived(first, contract=_NOV),), policy=_POLICY, profile=_PROFILE)
+
+
+def test_a_batch_is_all_or_nothing() -> None:
+    store, first = Recommendations(), _recorded()
+    other_expiry = _derived(first, contract=_NOV)
+
+    with pytest.raises(FuturesTradeRecommendationExclusivityError):
+        store.record((first, other_expiry), policy=_POLICY, profile=_PROFILE)
+    assert store.recorded == {}
+
+
+def test_a_profile_version_reused_with_other_contents_is_a_configuration_conflict() -> None:
+    store = Recommendations()
+    store.record((_recorded(),), policy=_POLICY, profile=_PROFILE)
+    reused = FuturesTradeRecommendationGenerationProfile(_PROFILE.version, 7, _POLICY.version)
+
+    with pytest.raises(FuturesTradeRecommendationConfigurationConflictError):
+        store.record((), policy=_POLICY, profile=reused)
+
+
+def test_an_invalid_recording_request_is_refused_before_anything_is_written() -> None:
+    store = Recommendations()
+    other_profile = FuturesTradeRecommendationGenerationProfile(
+        "f5a-synthetic-profile-v1", 5, RecommendationPolicyVersion("f4-synthetic-fixture-v9")
+    )
+
+    with pytest.raises(InvalidFuturesTradeRecommendationRecordingError):
+        store.record((_recorded(),), policy=_POLICY, profile=other_profile)
+    assert store.writes == [] and store.recorded == {}
+
+
+# ---------------------------------------------------------------------------
+# Same-identity races: the first recording wins and is returned unchanged
+# ---------------------------------------------------------------------------
+
+
+class Racing(Recommendations):
+    """Another attempt records ``winner`` after this one's pre-read and before its write.
+
+    The pre-read sees nothing; the write then meets the winner and is refused
+    with a same-identity conflict, exactly as a durable store would refuse it.
+    """
+
+    def __init__(
+        self,
+        winner: object,
+        *,
+        refuse_with: type[Exception] = FuturesTradeRecommendationConflictError,
+    ) -> None:
+        super().__init__()
+        self.winner = winner
+        self.refuse_with = refuse_with
+        self.raced = False
+        self.reads: list[FuturesTradeRecommendationIdentity] = []
+
+    def get_recommendation(self, identity):
+        self.reads.append(identity)
+        if not self.raced:
+            return None
+        return self.winner
+
+    def record(self, recommendations, *, policy, profile):
+        validate_futures_trade_recommendation_recording(
+            recommendations, policy=policy, profile=profile
+        )
+        self.writes.append(recommendations)
+        self.received.append((policy, profile))
+        self.raced = True
+        raise self.refuse_with("synthetic: the identity is already recorded")
+
+
+def _count_f4(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    calls: list[int] = []
+    original = generation_module.FuturesRecommendationGeneration.generate
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(generation_module.FuturesRecommendationGeneration, "generate", counted)
+    return calls
+
+
+def test_a_losing_attempt_returns_the_recorded_winner_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    winner = _recorded(_T1)
+    world = _world(recommendations=Racing(winner))
+    f4_calls = _count_f4(monkeypatch)
+
+    result = _run(world, issued_at=_T2)
+
+    assert result.status is Status.COMPLETED
+    assert result.recorded == () and result.existing == (winner,)
+    assert result.existing[0].issued_at == _T1
+    assert (result.existing[0].entry, result.existing[0].stop, result.existing[0].target) == (
+        winner.entry,
+        winner.stop,
+        winner.target,
+    )
+    assert result.existing[0].validity == winner.validity
+    assert result.existing[0].thesis == winner.thesis
+    assert result.existing[0].identity == _identity(world)
+    assert len(world.recommendations.writes) == 1 and f4_calls == [1]
+    assert world.recommendations.reads == [_identity(world), _identity(world)]
+
+
+def test_the_losing_definition_is_discarded_not_stored() -> None:
+    winner = _recorded(_T1)
+    world = _world(recommendations=Racing(winner))
+
+    result = _run(world, issued_at=_T2)
+
+    (losing,) = world.recommendations.writes[0]
+    assert losing.issued_at == _T2 and losing != winner
+    assert world.recommendations.recorded == {}
+    assert result.generation.proposals[0].issued_at == _T2
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        lambda w: dataclasses.replace(
+            w,
+            source=dataclasses.replace(
+                w.source, decision_instant=_session(date(2026, 10, 6)).closes_at
+            ),
+        ),
+        lambda w: dataclasses.replace(
+            w, source=dataclasses.replace(w.source, strategy_identity=_OTHER)
+        ),
+        lambda w: dataclasses.replace(
+            w, contract=_NOV, source=dataclasses.replace(w.source, contract=_NOV)
+        ),
+        lambda w: dataclasses.replace(w, policy_version=RecommendationPolicyVersion("tampered")),
+    ],
+    ids=["decision-instant", "strategy", "contract", "policy-version"],
+)
+def test_a_winner_for_another_source_or_configuration_is_a_conflict(tamper) -> None:
+    world = _world(recommendations=Racing(tamper(_recorded(_T1))))
+
+    with pytest.raises(FuturesTradeRecommendationConflictError):
+        _run(world, issued_at=_T2)
+
+
+@pytest.mark.parametrize(
+    "stored",
+    ["not a recommendation", None],
+    ids=["malformed", "missing"],
+)
+def test_a_missing_or_malformed_winner_never_succeeds(stored: object) -> None:
+    world = _world(recommendations=Racing(stored))
+
+    with pytest.raises(
+        (FuturesTradeRecommendationConflictError, FuturesTradeRecommendationContractViolationError)
+    ):
+        _run(world, issued_at=_T2)
+
+
+def test_a_winner_answered_under_another_identity_is_a_contract_violation() -> None:
+    winner = _derived(_recorded(_T1), strategy=_OTHER)
+    world = _world(recommendations=Racing(winner))
+
+    with pytest.raises(FuturesTradeRecommendationContractViolationError):
+        _run(world, issued_at=_T2)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        FuturesTradeRecommendationConfigurationConflictError,
+        FuturesTradeRecommendationExclusivityError,
+    ],
+)
+def test_configuration_and_exclusivity_conflicts_are_never_reconciled(error: type) -> None:
+    racing = Racing(_recorded(_T1), refuse_with=error)
+    world = _world(recommendations=racing)
+
+    with pytest.raises(error):
+        _run(world, issued_at=_T2)
+    assert racing.reads == [_identity(world)]
+
+
+def test_a_batch_race_is_reconciled_only_when_every_winner_verifies() -> None:
+    winner = _recorded(_T1)
+    sibling = _derived(winner, strategy=_OTHER)
+    identities = {winner.source: winner.identity, sibling.source: sibling.identity}
+
+    class Partial(Racing):
+        def get_recommendation(self, identity):
+            return {winner.identity: winner}.get(identity) if self.raced else None
+
+    class Complete(Racing):
+        def get_recommendation(self, identity):
+            stored = {winner.identity: winner, sibling.identity: sibling}
+            return stored.get(identity) if self.raced else None
+
+    def reconcile(store: Racing):
+        use_case = _world(recommendations=store).use_case()
+        store.raced = True
+        use_case._store = _Refusing()
+        return use_case._record((winner, sibling), identities, _POLICY, _PROFILE)
+
+    with pytest.raises(FuturesTradeRecommendationConflictError):
+        reconcile(Partial(winner))
+    assert reconcile(Complete(winner)) == (winner, sibling)
+
+
+class _Refusing(FuturesTradeRecommendationStore):
+    def record(self, recommendations, *, policy, profile):
+        raise FuturesTradeRecommendationConflictError("synthetic batch race")
+
+
 def test_a_store_conflict_propagates_and_nothing_is_recorded() -> None:
     world = _world()
 
     class Conflicting(Recommendations):
-        def record(self, recommendations):
+        def record(self, recommendations, *, policy, profile):
             raise FuturesTradeRecommendationConflictError("synthetic conflict")
 
     world.recommendations = Conflicting()
