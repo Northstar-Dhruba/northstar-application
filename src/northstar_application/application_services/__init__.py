@@ -185,6 +185,29 @@ from northstar_application.application_services.futures_forward_research_record 
 from northstar_application.application_services.futures_paper_execution_identities import (
     FuturesPaperExecutionIdentityService,
 )
+from northstar_application.application_services.futures_recommendation_identities import (
+    FUTURES_TRADE_RECOMMENDATION_IDENTITY_NAMESPACE,
+    FuturesTradeRecommendationIdentityService,
+)
+from northstar_application.application_services.futures_recommendation_profile import (
+    FuturesTradeRecommendationGenerationProfile,
+    InvalidFuturesTradeRecommendationGenerationProfileError,
+)
+from northstar_application.application_services.futures_recommendation_session_windows import (
+    FuturesRecommendationSessionWindowResolver,
+    FuturesRecommendationWindowResolutionError,
+)
+from northstar_application.application_services.generate_futures_trade_recommendations import (
+    FuturesResearchHistoryCoverage,
+    FuturesResearchHistoryDeficiency,
+    FuturesTradeRecommendationBlockReason,
+    FuturesTradeRecommendationContractViolationError,
+    FuturesTradeRecommendationGenerationResult,
+    FuturesTradeRecommendationGenerationStatus,
+    FuturesTradeRecommendationSourceError,
+    GenerateFuturesTradeRecommendationsUseCase,
+    InvalidFuturesTradeRecommendationGenerationError,
+)
 from northstar_application.application_services.get_futures_paper_trading_snapshot import (
     FuturesPaperDecisionSnapshot,
     FuturesPaperTradingSnapshot,
@@ -444,4 +467,19 @@ __all__ = [
     "OptionChainListingNotKnownError",
     "OptionChainSessionNotFoundError",
     "OptionChainSnapshotQuery",
+    "FUTURES_TRADE_RECOMMENDATION_IDENTITY_NAMESPACE",
+    "FuturesTradeRecommendationIdentityService",
+    "FuturesTradeRecommendationGenerationProfile",
+    "InvalidFuturesTradeRecommendationGenerationProfileError",
+    "FuturesRecommendationSessionWindowResolver",
+    "FuturesRecommendationWindowResolutionError",
+    "FuturesResearchHistoryCoverage",
+    "FuturesResearchHistoryDeficiency",
+    "FuturesTradeRecommendationBlockReason",
+    "FuturesTradeRecommendationContractViolationError",
+    "FuturesTradeRecommendationGenerationResult",
+    "FuturesTradeRecommendationGenerationStatus",
+    "FuturesTradeRecommendationSourceError",
+    "GenerateFuturesTradeRecommendationsUseCase",
+    "InvalidFuturesTradeRecommendationGenerationError",
 ]

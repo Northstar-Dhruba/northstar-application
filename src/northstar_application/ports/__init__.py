@@ -9,6 +9,11 @@ from northstar_application.ports.forward_research_record_store import (
     ForwardResearchRecordConflictError,
     ForwardResearchRecordStore,
 )
+from northstar_application.ports.futures_contract_cutoff_source import (
+    FuturesContractCutoff,
+    FuturesContractCutoffSource,
+    InvalidFuturesContractCutoffError,
+)
 from northstar_application.ports.futures_contract_economics_repository import (
     FuturesContractEconomicsRepository,
 )
@@ -74,6 +79,16 @@ from northstar_application.ports.futures_product_economics_repository import (
 from northstar_application.ports.futures_product_economics_store import (
     FuturesProductEconomicsConflictError,
     FuturesProductEconomicsStore,
+)
+from northstar_application.ports.futures_trade_recommendation_repository import (
+    FuturesTradeRecommendationQuery,
+    FuturesTradeRecommendationRepository,
+    InvalidFuturesTradeRecommendationQueryError,
+)
+from northstar_application.ports.futures_trade_recommendation_store import (
+    FuturesTradeRecommendationConflictError,
+    FuturesTradeRecommendationExclusivityError,
+    FuturesTradeRecommendationStore,
 )
 from northstar_application.ports.futures_trading_session_resolver import (
     FuturesSessionResolutionError,
@@ -236,4 +251,13 @@ __all__ = [
     "PaperFillStore",
     "TradingSessionResolutionError",
     "TradingSessionResolver",
+    "FuturesContractCutoff",
+    "FuturesContractCutoffSource",
+    "InvalidFuturesContractCutoffError",
+    "FuturesTradeRecommendationQuery",
+    "FuturesTradeRecommendationRepository",
+    "InvalidFuturesTradeRecommendationQueryError",
+    "FuturesTradeRecommendationConflictError",
+    "FuturesTradeRecommendationExclusivityError",
+    "FuturesTradeRecommendationStore",
 ]
