@@ -91,20 +91,41 @@ different contents.
 The issuance instant is captured once by the caller and used for the whole
 operation. This use case reads no clock.
 
+Audits
+------
+Every attempt that returns a result is audited with a
+FuturesRecommendationGenerationAudit built from exactly that result:
+
+- a result that newly records recommendations is the audit's source *before*
+  the write, and the audit travels inside ``store.record``: the store commits
+  the definitions and that RECORDED audit in one transaction or neither (I-2).
+  The result is returned only once that write succeeded, so the audit always
+  describes what was committed;
+- every other result -- BLOCKED, a completed attempt that recorded nothing, a
+  retry that returned existing recommendations, an attempt that lost the race
+  and returned the winner -- is audited after the fact through the standalone
+  audit store, which refuses a RECORDED audit. A loser's audit is therefore
+  EXISTING_RETURNED: it shows its own proposal, and the winner as existing.
+
+An attempt that raises -- contradictory evidence, a port outside its contract,
+a configuration or exclusivity conflict, a storage failure -- returns no result
+and records no audit; none of them is disguised as a rejection. If the
+standalone audit cannot be recorded, its error propagates, and since nothing
+was recorded the attempt may simply be retried.
+
 Limits
 ------
 Reads and the final write are separate port calls. Nothing here is a
 transaction: a concurrent writer could record between the open-set read and the
-write. The store's own semantics -- exclusivity checked and the row inserted in
-one transaction -- are what make that safe, and only a durable implementation
-can provide them (F-5B).
+write. The store's own semantics -- exclusivity checked and the rows and audit
+inserted in one transaction -- are what make that safe, and only a durable
+implementation can provide them (F-5B).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from enum import StrEnum
 
 from northstar_core.foundation.value_objects import PointInTime, Timeframe
 from northstar_core.futures import FuturesContract, FuturesOHLCVBar
@@ -134,6 +155,15 @@ from northstar_application.application_services.futures_candle_approvals import 
 from northstar_application.application_services.futures_forward_research_record import (
     FuturesForwardResearchRecord,
 )
+from northstar_application.application_services.futures_recommendation_generation_audit import (
+    FuturesRecommendationGenerationAudit,
+)
+from northstar_application.application_services.futures_recommendation_generation_outcome import (
+    FuturesResearchHistoryCoverage,
+    FuturesResearchHistoryDeficiency,
+    FuturesTradeRecommendationBlockReason,
+    FuturesTradeRecommendationGenerationStatus,
+)
 from northstar_application.application_services.futures_recommendation_identities import (
     FuturesTradeRecommendationIdentityService,
 )
@@ -157,6 +187,9 @@ from northstar_application.ports.futures_forward_research_record_repository impo
 from northstar_application.ports.futures_historical_market_data_repository import (
     FuturesHistoricalMarketDataQuery,
     FuturesHistoricalMarketDataRepository,
+)
+from northstar_application.ports.futures_recommendation_generation_audit_store import (
+    FuturesRecommendationGenerationAuditStore,
 )
 from northstar_application.ports.futures_trade_recommendation_repository import (
     FuturesTradeRecommendationQuery,
@@ -188,39 +221,6 @@ class FuturesTradeRecommendationContractViolationError(RuntimeError):
 
 class FuturesTradeRecommendationSourceError(ValueError):
     """Raised when frozen research contradicts the reviewed market evidence."""
-
-
-class FuturesTradeRecommendationGenerationStatus(StrEnum):
-    """Whether generation ran to completion or was blocked before generating."""
-
-    COMPLETED = "COMPLETED"
-    BLOCKED = "BLOCKED"
-
-
-class FuturesTradeRecommendationBlockReason(StrEnum):
-    """Why generation was blocked; nothing was generated or recorded."""
-
-    NO_PERSISTED_SESSION = "NO_PERSISTED_SESSION"
-    SESSION_NOT_FINAL = "SESSION_NOT_FINAL"
-    SESSION_NOT_OPERATOR_REVIEWED = "SESSION_NOT_OPERATOR_REVIEWED"
-    NO_RESEARCH_FOR_SESSION = "NO_RESEARCH_FOR_SESSION"
-    RESEARCH_HISTORY_NOT_VERIFIED = "RESEARCH_HISTORY_NOT_VERIFIED"
-    CONTRACT_CUTOFF_UNAVAILABLE = "CONTRACT_CUTOFF_UNAVAILABLE"
-
-
-class FuturesResearchHistoryCoverage(StrEnum):
-    """Whether the research history behind the decision was verified complete."""
-
-    VERIFIED = "VERIFIED"
-    UNVERIFIED = "UNVERIFIED"
-
-
-class FuturesResearchHistoryDeficiency(StrEnum):
-    """Why research history is UNVERIFIED; the first that applies is reported."""
-
-    INCOMPLETE_CALENDAR = "INCOMPLETE_CALENDAR"
-    MISSING_BAR = "MISSING_BAR"
-    UNAPPROVED_CANDLE = "UNAPPROVED_CANDLE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +303,7 @@ class GenerateFuturesTradeRecommendationsUseCase:
         cutoffs: FuturesContractCutoffSource,
         recommendations: FuturesTradeRecommendationRepository,
         store: FuturesTradeRecommendationStore,
+        audits: FuturesRecommendationGenerationAuditStore,
     ) -> None:
         for value, expected, name in (
             (research, FuturesForwardResearchRecordRepository, "research"),
@@ -312,6 +313,7 @@ class GenerateFuturesTradeRecommendationsUseCase:
             (cutoffs, FuturesContractCutoffSource, "cutoffs"),
             (recommendations, FuturesTradeRecommendationRepository, "recommendations"),
             (store, FuturesTradeRecommendationStore, "store"),
+            (audits, FuturesRecommendationGenerationAuditStore, "audits"),
         ):
             if not isinstance(value, expected):
                 raise TypeError(
@@ -325,6 +327,7 @@ class GenerateFuturesTradeRecommendationsUseCase:
         self._cutoffs = cutoffs
         self._recommendations = recommendations
         self._store = store
+        self._audits = audits
         self._identities = FuturesTradeRecommendationIdentityService()
         self._windows = FuturesRecommendationSessionWindowResolver(sessions)
 
@@ -341,17 +344,31 @@ class GenerateFuturesTradeRecommendationsUseCase:
         """Generate, identify and record recommendations for ``contract``'s latest session."""
         self._validate_request(contract, strategy, policy, profile, issued_at, reviewed_candles)
 
-        def blocked(
-            reason: FuturesTradeRecommendationBlockReason, **facts: object
+        def result(
+            status: FuturesTradeRecommendationGenerationStatus, **facts: object
         ) -> FuturesTradeRecommendationGenerationResult:
             return FuturesTradeRecommendationGenerationResult(
                 contract=contract,
                 strategy=strategy,
                 profile=profile,
                 issued_at=issued_at,
-                status=FuturesTradeRecommendationGenerationStatus.BLOCKED,
-                block_reason=reason,
+                status=status,
                 **facts,  # type: ignore[arg-type]
+            )
+
+        def audited(
+            outcome: FuturesTradeRecommendationGenerationResult,
+        ) -> FuturesTradeRecommendationGenerationResult:
+            self._audits.record_audit(FuturesRecommendationGenerationAudit.of(outcome))
+            return outcome
+
+        def blocked(
+            reason: FuturesTradeRecommendationBlockReason, **facts: object
+        ) -> FuturesTradeRecommendationGenerationResult:
+            return audited(
+                result(
+                    FuturesTradeRecommendationGenerationStatus.BLOCKED, block_reason=reason, **facts
+                )
             )
 
         bars = self._bars(contract)
@@ -471,25 +488,37 @@ class GenerateFuturesTradeRecommendationsUseCase:
                 proposal.to_recommendation(identities[proposal.source])
                 for proposal in generation.proposals
             )
-            if recorded:
-                winners = self._record(recorded, identities, policy, profile)
-                if winners:
-                    recorded, existing = (), existing + winners
 
-        return FuturesTradeRecommendationGenerationResult(
-            contract=contract,
-            strategy=strategy,
-            profile=profile,
-            issued_at=issued_at,
-            status=FuturesTradeRecommendationGenerationStatus.COMPLETED,
-            session=session,
-            finality=finality,
-            history_coverage=coverage,
-            selection=selection,
-            generation=generation,
-            recorded=recorded,
-            existing=existing,
-        )
+        def completed(
+            recorded: tuple[FuturesTradeRecommendation, ...],
+            existing: tuple[FuturesTradeRecommendation, ...],
+        ) -> FuturesTradeRecommendationGenerationResult:
+            return result(
+                FuturesTradeRecommendationGenerationStatus.COMPLETED,
+                session=session,
+                finality=finality,
+                history_coverage=coverage,
+                selection=selection,
+                generation=generation,
+                recorded=recorded,
+                existing=existing,
+            )
+
+        if recorded:
+            # The audit of exactly this result commits with its definitions, or
+            # neither does; the result is returned only after that commit.
+            committed = completed(recorded, existing)
+            winners = self._record(
+                recorded,
+                identities,
+                policy,
+                profile,
+                FuturesRecommendationGenerationAudit.of(committed),
+            )
+            if not winners:
+                return committed
+            return audited(completed((), existing + winners))
+        return audited(completed((), existing))
 
     # -- request ------------------------------------------------------------------------
 
@@ -754,16 +783,19 @@ class GenerateFuturesTradeRecommendationsUseCase:
         identities: dict[FuturesResearchDecisionReference, FuturesTradeRecommendationIdentity],
         policy: FuturesRecommendationGenerationPolicy,
         profile: FuturesTradeRecommendationGenerationProfile,
+        audit: FuturesRecommendationGenerationAudit,
     ) -> tuple[FuturesTradeRecommendation, ...]:
-        """Record the batch; on a same-identity race, return the verified winners.
+        """Record the batch with its audit; on a same-identity race, return the winners.
 
-        Returns () when this batch was recorded. When the store reports that an
+        Returns () when this batch and its audit were recorded. When the store reports that an
         identity is already recorded differently, every identity of the batch
         is re-read and must be the expected recommendation; the stored winners
         are returned in the batch's order and nothing of this batch is kept.
         """
         try:
-            accepted = self._store.record(recommendations, policy=policy, profile=profile)
+            accepted = self._store.record(
+                recommendations, policy=policy, profile=profile, audit=audit
+            )
         except FuturesTradeRecommendationConflictError as conflict:
             winners: list[FuturesTradeRecommendation] = []
             for recommendation in recommendations:
