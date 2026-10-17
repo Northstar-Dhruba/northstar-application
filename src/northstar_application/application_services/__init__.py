@@ -195,6 +195,24 @@ from northstar_application.application_services.futures_expiry_flatten_guard imp
 from northstar_application.application_services.futures_forward_research_record import (
     FuturesForwardResearchRecord,
 )
+from northstar_application.application_services.futures_historical_dataset_manifest import (
+    FUTURES_HISTORICAL_DATASET_FINGERPRINT_NAMESPACE,
+    FUTURES_HISTORICAL_DATASET_FINGERPRINT_PREFIX,
+    FUTURES_HISTORICAL_DATASET_MANIFEST_SCHEMA,
+    FuturesHistoricalDatasetBarReference,
+    FuturesHistoricalDatasetCompleteness,
+    FuturesHistoricalDatasetCoverage,
+    FuturesHistoricalDatasetManifest,
+    FuturesHistoricalDatasetSession,
+    FuturesHistoricalDatasetSource,
+    FuturesHistoricalDatasetSourceCategory,
+    FuturesHistoricalDatasetVersionError,
+    FuturesHistoricalDatasetVolumeUnit,
+    InvalidFuturesHistoricalDatasetManifestError,
+    parse_futures_historical_dataset_manifest,
+    verify_futures_historical_dataset_catalog,
+    verify_futures_historical_dataset_revision,
+)
 from northstar_application.application_services.futures_paper_execution_identities import (
     FuturesPaperExecutionIdentityService,
 )
@@ -544,4 +562,20 @@ __all__ = [
     "FuturesRecommendationEvaluationRequest",
     "FuturesRecommendationEvaluationResult",
     "InvalidFuturesRecommendationEvaluationError",
+    "FUTURES_HISTORICAL_DATASET_FINGERPRINT_NAMESPACE",
+    "FUTURES_HISTORICAL_DATASET_FINGERPRINT_PREFIX",
+    "FUTURES_HISTORICAL_DATASET_MANIFEST_SCHEMA",
+    "FuturesHistoricalDatasetBarReference",
+    "FuturesHistoricalDatasetCompleteness",
+    "FuturesHistoricalDatasetCoverage",
+    "FuturesHistoricalDatasetManifest",
+    "FuturesHistoricalDatasetSession",
+    "FuturesHistoricalDatasetSource",
+    "FuturesHistoricalDatasetSourceCategory",
+    "FuturesHistoricalDatasetVersionError",
+    "FuturesHistoricalDatasetVolumeUnit",
+    "InvalidFuturesHistoricalDatasetManifestError",
+    "parse_futures_historical_dataset_manifest",
+    "verify_futures_historical_dataset_catalog",
+    "verify_futures_historical_dataset_revision",
 ]
