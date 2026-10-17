@@ -27,12 +27,21 @@ from northstar_core.strategy import ExplanationReason, StrategyIdentity
 
 import northstar_application.ports as ports
 from northstar_application.application_services import (
+    FuturesRecommendationGenerationAudit,
+    FuturesResearchHistoryCoverage,
+    FuturesTradeRecommendationBlockReason,
     FuturesTradeRecommendationGenerationProfile,
+    FuturesTradeRecommendationGenerationStatus,
     FuturesTradeRecommendationIdentityService,
 )
 from northstar_application.ports import (
     FuturesContractCutoff,
     FuturesContractCutoffSource,
+    FuturesDailyBarFinality,
+    FuturesDailyBarFinalityOutcome,
+    FuturesRecommendationGenerationAuditConflictError,
+    FuturesRecommendationGenerationAuditRepository,
+    FuturesRecommendationGenerationAuditStore,
     FuturesTradeRecommendationConfigurationConflictError,
     FuturesTradeRecommendationConflictError,
     FuturesTradeRecommendationExclusivityError,
@@ -41,13 +50,16 @@ from northstar_application.ports import (
     FuturesTradeRecommendationStore,
     FuturesTradingSession,
     InvalidFuturesContractCutoffError,
+    InvalidFuturesRecommendationGenerationAuditRecordingError,
     InvalidFuturesTradeRecommendationQueryError,
     InvalidFuturesTradeRecommendationRecordingError,
     validate_futures_trade_recommendation_recording,
+    validate_standalone_futures_recommendation_generation_audit,
 )
 
 _NIFTY = FuturesProductReference(Symbol("NIFTY"), ExchangeCode("NSE"))
 _OCT = FuturesContract(_NIFTY, ExpirationDate("2026-10-27"))
+_NOV = FuturesContract(_NIFTY, ExpirationDate("2026-11-24"))
 _LAST = FuturesTradingSession(
     date(2026, 10, 27), PointInTime("2026-10-27T03:45:00Z"), PointInTime("2026-10-27T10:00:00Z")
 )
@@ -103,6 +115,8 @@ def test_the_cutoff_cannot_be_built_from_an_expiration_date_alone() -> None:
         FuturesContractCutoffSource,
         FuturesTradeRecommendationRepository,
         FuturesTradeRecommendationStore,
+        FuturesRecommendationGenerationAuditStore,
+        FuturesRecommendationGenerationAuditRepository,
     ],
 )
 def test_the_ports_are_abstract(port: type) -> None:
@@ -187,20 +201,165 @@ def _recommendation(
     )
 
 
-def test_record_requires_policy_and_profile_by_keyword() -> None:
+_SESSION = FuturesTradingSession(
+    date(2026, 10, 7), PointInTime("2026-10-07T03:45:00Z"), PointInTime("2026-10-07T10:00:00Z")
+)
+
+
+def _audit(*recommendations: FuturesTradeRecommendation, **overrides: object):
+    identities = tuple(recommendation.identity for recommendation in recommendations)
+    values: dict[str, object] = {
+        "contract": _OCT,
+        "strategy": _STRATEGY,
+        "policy_version": _POLICY.version,
+        "profile_version": _PROFILE.version,
+        "attempted_at": PointInTime("2026-10-07T12:00:00Z"),
+        "status": FuturesTradeRecommendationGenerationStatus.COMPLETED,
+        "session": _SESSION,
+        "finality": FuturesDailyBarFinality(
+            _OCT, _SESSION, FuturesDailyBarFinalityOutcome.FINAL, "synthetic"
+        ),
+        "history_coverage": FuturesResearchHistoryCoverage.VERIFIED,
+        "proposed": identities,
+        "recorded": identities,
+    }
+    values.update(overrides)
+    return FuturesRecommendationGenerationAudit(**values)  # type: ignore[arg-type]
+
+
+def test_record_requires_policy_profile_and_audit_by_keyword() -> None:
     parameters = inspect.signature(FuturesTradeRecommendationStore.record).parameters
 
-    for name in ("policy", "profile"):
+    for name in ("policy", "profile", "audit"):
         assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
         assert parameters[name].default is inspect.Parameter.empty
-    assert list(parameters) == ["self", "recommendations", "policy", "profile"]
+    assert list(parameters) == ["self", "recommendations", "policy", "profile", "audit"]
 
 
 def test_a_coherent_recording_request_is_accepted() -> None:
+    recommendation = _recommendation()
     validate_futures_trade_recommendation_recording(
-        (_recommendation(),), policy=_POLICY, profile=_PROFILE
+        (recommendation,), policy=_POLICY, profile=_PROFILE, audit=_audit(recommendation)
     )
-    validate_futures_trade_recommendation_recording((), policy=_POLICY, profile=_PROFILE)
+
+
+_REC = _recommendation()
+
+
+@pytest.mark.parametrize(
+    "recommendations, audit",
+    [
+        ((_REC,), None),
+        ((_REC,), "audit"),
+        ((), _audit(_REC)),
+        ((_REC,), _audit(_REC, recorded=())),
+        ((_REC,), _audit(_REC, recorded=(), existing=(_REC.identity,))),
+        (
+            (_REC,),
+            _audit(
+                _REC,
+                status=FuturesTradeRecommendationGenerationStatus.BLOCKED,
+                block_reason=FuturesTradeRecommendationBlockReason.NO_RESEARCH_FOR_SESSION,
+                history_coverage=None,
+                proposed=(),
+                recorded=(),
+            ),
+        ),
+        ((_REC,), _audit(_REC, profile_version="f5a-synthetic-profile-v2")),
+        ((_REC,), _audit(_REC, strategy=StrategyIdentity("synthetic-other-v1"))),
+        ((_REC,), _audit(_REC, attempted_at=PointInTime("2026-10-07T12:00:01Z"))),
+        (
+            (_REC,),
+            _audit(
+                _REC,
+                contract=_NOV,
+                finality=FuturesDailyBarFinality(
+                    _NOV, _SESSION, FuturesDailyBarFinalityOutcome.FINAL, "synthetic"
+                ),
+            ),
+        ),
+    ],
+    ids=[
+        "no-audit",
+        "not-an-audit",
+        "empty-batch",
+        "audit-records-nothing",
+        "existing-audit",
+        "blocked-audit",
+        "other-profile",
+        "other-strategy",
+        "other-attempt-instant",
+        "other-contract",
+    ],
+)
+def test_a_recording_whose_audit_does_not_account_for_it_is_refused(
+    recommendations: tuple, audit: object
+) -> None:
+    with pytest.raises(InvalidFuturesTradeRecommendationRecordingError):
+        validate_futures_trade_recommendation_recording(
+            recommendations,
+            policy=_POLICY,
+            profile=_PROFILE,
+            audit=audit,  # type: ignore[arg-type]
+        )
+
+
+def test_a_recording_audit_must_name_the_batch_in_order() -> None:
+    other = dataclasses.replace(_REC, identity=FuturesTradeRecommendationIdentity("b" * 64))
+    audit = _audit(_REC, proposed=(_REC.identity, other.identity), recorded=(other.identity,))
+
+    with pytest.raises(InvalidFuturesTradeRecommendationRecordingError, match="exactly"):
+        validate_futures_trade_recommendation_recording(
+            (_REC,), policy=_POLICY, profile=_PROFILE, audit=audit
+        )
+
+
+@pytest.mark.parametrize(
+    "audit",
+    [
+        _audit(_REC, recorded=(), existing=(_REC.identity,)),
+        _audit(_REC, proposed=(), recorded=()),
+        _audit(
+            _REC,
+            status=FuturesTradeRecommendationGenerationStatus.BLOCKED,
+            block_reason=FuturesTradeRecommendationBlockReason.NO_RESEARCH_FOR_SESSION,
+            history_coverage=None,
+            proposed=(),
+            recorded=(),
+        ),
+    ],
+    ids=["existing", "rejected", "blocked"],
+)
+def test_a_standalone_audit_is_accepted(audit: FuturesRecommendationGenerationAudit) -> None:
+    validate_standalone_futures_recommendation_generation_audit(audit)
+
+
+@pytest.mark.parametrize("audit", [_audit(_REC), "audit", None], ids=["recorded", "text", "none"])
+def test_a_recorded_or_foreign_audit_cannot_be_recorded_on_its_own(audit: object) -> None:
+    with pytest.raises(InvalidFuturesRecommendationGenerationAuditRecordingError):
+        validate_standalone_futures_recommendation_generation_audit(audit)  # type: ignore[arg-type]
+
+
+def test_the_audit_store_and_repository_signatures() -> None:
+    record = inspect.signature(FuturesRecommendationGenerationAuditStore.record_audit)
+    read = inspect.signature(FuturesRecommendationGenerationAuditRepository.get_audit)
+
+    assert list(record.parameters) == ["self", "audit"]
+    assert list(read.parameters) == ["self", "identity"]
+
+
+def test_the_audit_errors_are_distinct_from_recording_conflicts() -> None:
+    for error in (
+        FuturesRecommendationGenerationAuditConflictError,
+        InvalidFuturesRecommendationGenerationAuditRecordingError,
+    ):
+        assert issubclass(error, ValueError)
+        for other in (
+            FuturesTradeRecommendationConflictError,
+            FuturesTradeRecommendationConfigurationConflictError,
+            FuturesTradeRecommendationExclusivityError,
+        ):
+            assert not issubclass(error, other) and not issubclass(other, error)
 
 
 @pytest.mark.parametrize(
@@ -244,6 +403,7 @@ def test_an_incoherent_recording_request_is_refused(
             recommendations,  # type: ignore[arg-type]
             policy=policy,  # type: ignore[arg-type]
             profile=profile,  # type: ignore[arg-type]
+            audit=_audit(_REC),
         )
 
 
@@ -254,7 +414,7 @@ def test_an_identity_derived_under_another_profile_is_refused() -> None:
 
     with pytest.raises(InvalidFuturesTradeRecommendationRecordingError):
         validate_futures_trade_recommendation_recording(
-            (_recommendation(),), policy=_POLICY, profile=other
+            (_recommendation(),), policy=_POLICY, profile=other, audit=_audit(_REC)
         )
 
 
@@ -278,5 +438,10 @@ def test_recording_contract_exports() -> None:
         "FuturesTradeRecommendationConfigurationConflictError",
         "InvalidFuturesTradeRecommendationRecordingError",
         "validate_futures_trade_recommendation_recording",
+        "FuturesRecommendationGenerationAuditConflictError",
+        "FuturesRecommendationGenerationAuditRepository",
+        "FuturesRecommendationGenerationAuditStore",
+        "InvalidFuturesRecommendationGenerationAuditRecordingError",
+        "validate_standalone_futures_recommendation_generation_audit",
     ):
         assert name in ports.__all__

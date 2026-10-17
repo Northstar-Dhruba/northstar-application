@@ -80,6 +80,13 @@ from northstar_application.ports.futures_product_economics_store import (
     FuturesProductEconomicsConflictError,
     FuturesProductEconomicsStore,
 )
+from northstar_application.ports.futures_recommendation_generation_audit_store import (
+    FuturesRecommendationGenerationAuditConflictError,
+    FuturesRecommendationGenerationAuditRepository,
+    FuturesRecommendationGenerationAuditStore,
+    InvalidFuturesRecommendationGenerationAuditRecordingError,
+    validate_standalone_futures_recommendation_generation_audit,
+)
 from northstar_application.ports.futures_trade_recommendation_lifecycle_store import (
     FuturesTradeRecommendationLifecycleConflictError,
     FuturesTradeRecommendationLifecycleEvidenceError,
@@ -286,4 +293,9 @@ __all__ = [
     "InvalidFuturesTradeRecommendationLifecycleProgressError",
     "apply_futures_trade_recommendation_lifecycle_step",
     "validate_futures_trade_recommendation_lifecycle_progress",
+    "FuturesRecommendationGenerationAuditConflictError",
+    "FuturesRecommendationGenerationAuditRepository",
+    "FuturesRecommendationGenerationAuditStore",
+    "InvalidFuturesRecommendationGenerationAuditRecordingError",
+    "validate_standalone_futures_recommendation_generation_audit",
 ]

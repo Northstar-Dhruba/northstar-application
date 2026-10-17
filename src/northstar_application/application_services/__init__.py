@@ -185,6 +185,16 @@ from northstar_application.application_services.futures_forward_research_record 
 from northstar_application.application_services.futures_paper_execution_identities import (
     FuturesPaperExecutionIdentityService,
 )
+from northstar_application.application_services.futures_recommendation_generation_audit import (  # noqa: E501
+    FUTURES_RECOMMENDATION_GENERATION_AUDIT_IDENTITY_NAMESPACE,
+    FUTURES_RECOMMENDATION_GENERATION_AUDIT_VERSION,
+    FuturesCandidateRejectionAudit,
+    FuturesCandleReviewAssessment,
+    FuturesGenerationRejectionAudit,
+    FuturesRecommendationGenerationAudit,
+    FuturesRecommendationGenerationAuditOutcome,
+    InvalidFuturesRecommendationGenerationAuditError,
+)
 from northstar_application.application_services.futures_recommendation_identities import (
     FUTURES_TRADE_RECOMMENDATION_IDENTITY_NAMESPACE,
     FuturesTradeRecommendationIdentityService,
@@ -482,4 +492,12 @@ __all__ = [
     "FuturesTradeRecommendationSourceError",
     "GenerateFuturesTradeRecommendationsUseCase",
     "InvalidFuturesTradeRecommendationGenerationError",
+    "FUTURES_RECOMMENDATION_GENERATION_AUDIT_IDENTITY_NAMESPACE",
+    "FUTURES_RECOMMENDATION_GENERATION_AUDIT_VERSION",
+    "FuturesCandidateRejectionAudit",
+    "FuturesCandleReviewAssessment",
+    "FuturesGenerationRejectionAudit",
+    "FuturesRecommendationGenerationAudit",
+    "FuturesRecommendationGenerationAuditOutcome",
+    "InvalidFuturesRecommendationGenerationAuditError",
 ]
