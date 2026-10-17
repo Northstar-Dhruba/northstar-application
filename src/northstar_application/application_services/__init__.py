@@ -253,6 +253,17 @@ from northstar_application.application_services.measure_recommendation_outcome i
     RecommendationOutcomeMeasurement,
     RecommendationOutcomeUnavailableReason,
 )
+from northstar_application.application_services.monitor_futures_trade_recommendations import (  # noqa: E501
+    FUTURES_INCOMPLETE_COVERAGE_ATTESTATION_FORMAT,
+    FuturesIncompleteCoverageDeclaration,
+    FuturesRecommendationEvidenceGap,
+    FuturesRecommendationMonitoringOutcome,
+    FuturesRecommendationMonitoringResult,
+    FuturesRecommendationMonitoringSourceError,
+    FuturesRecommendationMonitoringStopReason,
+    InvalidFuturesRecommendationMonitoringError,
+    MonitorFuturesTradeRecommendationsUseCase,
+)
 from northstar_application.application_services.paper_trading_run import PaperTradingRun
 from northstar_application.application_services.record_forward_research_decision import (
     ForwardResearchContractViolationError,
@@ -500,4 +511,13 @@ __all__ = [
     "FuturesRecommendationGenerationAudit",
     "FuturesRecommendationGenerationAuditOutcome",
     "InvalidFuturesRecommendationGenerationAuditError",
+    "FUTURES_INCOMPLETE_COVERAGE_ATTESTATION_FORMAT",
+    "FuturesIncompleteCoverageDeclaration",
+    "FuturesRecommendationEvidenceGap",
+    "FuturesRecommendationMonitoringOutcome",
+    "FuturesRecommendationMonitoringResult",
+    "FuturesRecommendationMonitoringSourceError",
+    "FuturesRecommendationMonitoringStopReason",
+    "InvalidFuturesRecommendationMonitoringError",
+    "MonitorFuturesTradeRecommendationsUseCase",
 ]
