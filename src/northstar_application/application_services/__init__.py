@@ -141,6 +141,19 @@ from northstar_application.application_services.create_paper_execution_identitie
     CreatePaperExecutionIdentitiesUseCase,
     PaperExecutionIdentities,
 )
+from northstar_application.application_services.evaluate_futures_recommendation_policy import (  # noqa: E501
+    EvaluateFuturesRecommendationPolicyUseCase,
+    FuturesEvaluatedLifecycleState,
+    FuturesEvaluationEvidence,
+    FuturesEvaluationEvidenceClassification,
+    FuturesEvaluationSessionBlock,
+    FuturesEvaluationSessionRecord,
+    FuturesRecommendationEvaluationEvidenceError,
+    FuturesRecommendationEvaluationRecord,
+    FuturesRecommendationEvaluationRequest,
+    FuturesRecommendationEvaluationResult,
+    InvalidFuturesRecommendationEvaluationError,
+)
 from northstar_application.application_services.evaluate_historical_research import (
     EvaluateHistoricalResearchUseCase,
     HistoricalResearchEvaluation,
@@ -520,4 +533,15 @@ __all__ = [
     "FuturesRecommendationMonitoringStopReason",
     "InvalidFuturesRecommendationMonitoringError",
     "MonitorFuturesTradeRecommendationsUseCase",
+    "EvaluateFuturesRecommendationPolicyUseCase",
+    "FuturesEvaluatedLifecycleState",
+    "FuturesEvaluationEvidence",
+    "FuturesEvaluationEvidenceClassification",
+    "FuturesEvaluationSessionBlock",
+    "FuturesEvaluationSessionRecord",
+    "FuturesRecommendationEvaluationEvidenceError",
+    "FuturesRecommendationEvaluationRecord",
+    "FuturesRecommendationEvaluationRequest",
+    "FuturesRecommendationEvaluationResult",
+    "InvalidFuturesRecommendationEvaluationError",
 ]
