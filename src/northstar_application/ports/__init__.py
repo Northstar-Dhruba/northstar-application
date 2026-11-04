@@ -3,6 +3,7 @@
 from northstar_application.ports.equity_candle_evidence_journal import (
     EquityCandleEvidenceJournal,
     EquityCandleEvidenceSnapshotStore,
+    EquityCandleEvidenceUnavailableError,
     EquityCandleIngestionConflictError,
     EquityCandleSnapshotConflictError,
     EquityCandleSnapshotEvidenceError,
@@ -227,6 +228,7 @@ __all__ = [
     "EquityCandleSourceIdentityConflictError",
     "InvalidEquityCandleJournalQueryError",
     "EquityCandleSnapshotStaleError",
+    "EquityCandleEvidenceUnavailableError",
     "EquityReferenceProvenanceKind",
     "EquityResearchReferenceProvenanceSource",
     "EquityResearchWindowProvenance",

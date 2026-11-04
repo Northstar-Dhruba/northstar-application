@@ -199,6 +199,15 @@ from northstar_application.application_services.equity_intraday_candle_validatio
     InvalidEquityCandleEvidenceError,
     ValidateEquityIntradayCandlesUseCase,
 )
+from northstar_application.application_services.equity_intraday_evidence_workflow import (
+    EquityCandleIngestionOutcome,
+    EquityCandleIngestionReport,
+    EquityCandleIngestionResult,
+    EquityResearchEvidenceIssue,
+    EquityResearchEvidenceOutcome,
+    IngestSyntheticEquityCandleEventsUseCase,
+    IssueEquityResearchEvidenceUseCase,
+)
 from northstar_application.application_services.equity_research_window import (
     NSE_EQUITY_INTRADAY_V1_RESEARCH_WINDOW,
     EquityResearchWindowEvaluation,
@@ -469,6 +478,13 @@ __all__ = [
     "require_equity_candle_snapshot_evidence",
     "require_equity_candle_snapshot_current",
     "classify_equity_research_window_provenance",
+    "EquityCandleIngestionOutcome",
+    "EquityCandleIngestionReport",
+    "EquityCandleIngestionResult",
+    "EquityResearchEvidenceIssue",
+    "EquityResearchEvidenceOutcome",
+    "IngestSyntheticEquityCandleEventsUseCase",
+    "IssueEquityResearchEvidenceUseCase",
     "NO_APPROVED_EQUITY_CANDLE_FINALITY",
     "EquityCandleCoverage",
     "EquityCandleFinalityEvidence",
