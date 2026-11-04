@@ -1,5 +1,21 @@
 """Application-owned abstractions for external capabilities."""
 
+from northstar_application.ports.equity_candle_evidence_journal import (
+    EquityCandleEvidenceJournal,
+    EquityCandleEvidenceSnapshotStore,
+    EquityCandleIngestionConflictError,
+    EquityCandleSnapshotConflictError,
+    EquityCandleSnapshotEvidenceError,
+    EquityCandleSnapshotStaleError,
+    EquityCandleSourceIdentityConflictError,
+    InvalidEquityCandleJournalQueryError,
+)
+from northstar_application.ports.equity_research_reference_provenance import (
+    EquityReferenceProvenanceKind,
+    EquityResearchReferenceProvenanceSource,
+    EquityResearchWindowProvenance,
+    UnknownEquityReferenceProvenanceError,
+)
 from northstar_application.ports.equity_research_window_reference import (
     EquityListingApplicability,
     EquityListingApplicabilityClassification,
@@ -203,6 +219,18 @@ from northstar_application.ports.trading_session_resolver import (
 )
 
 __all__ = [
+    "EquityCandleEvidenceJournal",
+    "EquityCandleEvidenceSnapshotStore",
+    "EquityCandleIngestionConflictError",
+    "EquityCandleSnapshotConflictError",
+    "EquityCandleSnapshotEvidenceError",
+    "EquityCandleSourceIdentityConflictError",
+    "InvalidEquityCandleJournalQueryError",
+    "EquityCandleSnapshotStaleError",
+    "EquityReferenceProvenanceKind",
+    "EquityResearchReferenceProvenanceSource",
+    "EquityResearchWindowProvenance",
+    "UnknownEquityReferenceProvenanceError",
     "EquityListingApplicability",
     "EquityListingApplicabilitySource",
     "EquityListingApplicabilityClassification",
