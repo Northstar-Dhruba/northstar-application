@@ -72,6 +72,16 @@ if TYPE_CHECKING:
     )
 
 
+class EquityCandleEvidenceUnavailableError(RuntimeError):
+    """Raised by an implementation when evidence storage is unavailable or holds invalid data.
+
+    It is an operational failure, not a statement about the evidence. The
+    caller cannot assume the failing append did or did not commit -- a
+    connection can fail after a commit -- so it retries with the same
+    ingestion id, which the journal answers idempotently either way.
+    """
+
+
 class EquityCandleIngestionConflictError(ValueError):
     """Raised when an ingestion identity is reused for a different record."""
 
