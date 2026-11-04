@@ -141,6 +141,14 @@ from northstar_application.application_services.create_paper_execution_identitie
     CreatePaperExecutionIdentitiesUseCase,
     PaperExecutionIdentities,
 )
+from northstar_application.application_services.equity_research_window import (
+    NSE_EQUITY_INTRADAY_V1_RESEARCH_WINDOW,
+    EquityResearchWindowEvaluation,
+    EquityResearchWindowPolicy,
+    EquityResearchWindowRejection,
+    EvaluateEquityResearchWindowUseCase,
+    InvalidEquityResearchWindowPolicyError,
+)
 from northstar_application.application_services.equity_session_interval_grid import (
     EquitySessionInterval,
     EquitySessionIntervalGrid,
@@ -363,6 +371,12 @@ from northstar_application.application_services.value_futures_paper_portfolio im
 )
 
 __all__ = [
+    "NSE_EQUITY_INTRADAY_V1_RESEARCH_WINDOW",
+    "EquityResearchWindowEvaluation",
+    "EquityResearchWindowPolicy",
+    "EquityResearchWindowRejection",
+    "EvaluateEquityResearchWindowUseCase",
+    "InvalidEquityResearchWindowPolicyError",
     "EquitySessionInterval",
     "EquitySessionIntervalGrid",
     "InvalidEquitySessionIntervalGridError",
