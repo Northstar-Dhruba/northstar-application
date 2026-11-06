@@ -16,6 +16,16 @@ from northstar_application.application_services.acquire_option_native_daily_hist
     OptionDailySessionCoverageError,
     OptionHistoricalDataContractViolationError,
 )
+from northstar_application.application_services.advance_equity_intraday_research_timeline import (
+    EQUITY_INTRADAY_RESEARCH_TIMELINE_COMMIT_ATTEMPTS,
+    AdvanceEquityIntradayResearchTimelineUseCase,
+    EquityIntradayResearchTimelineAdvance,
+    EquityIntradayResearchTimelineAdvanceStatus,
+    StoredEquityIntradayResearchTimeline,
+    StoredEquityIntradayResearchTimelineEntry,
+    rehydrate_equity_intraday_research_timeline,
+    stored_equity_intraday_research_timeline,
+)
 from northstar_application.application_services.aggregate_futures_daily_session_bar import (
     AggregateFuturesDailySessionBarUseCase,
     InvalidFuturesSessionAggregationError,
@@ -535,6 +545,14 @@ __all__ = [
     "EquityIntradayResearchTimelineRole",
     "InvalidEquityIntradayResearchTimelineError",
     "ScheduleEquityIntradayResearchUseCase",
+    "EQUITY_INTRADAY_RESEARCH_TIMELINE_COMMIT_ATTEMPTS",
+    "AdvanceEquityIntradayResearchTimelineUseCase",
+    "EquityIntradayResearchTimelineAdvance",
+    "EquityIntradayResearchTimelineAdvanceStatus",
+    "StoredEquityIntradayResearchTimeline",
+    "StoredEquityIntradayResearchTimelineEntry",
+    "rehydrate_equity_intraday_research_timeline",
+    "stored_equity_intraday_research_timeline",
     "NO_APPROVED_EQUITY_CANDLE_FINALITY",
     "EquityCandleCoverage",
     "EquityCandleFinalityEvidence",
