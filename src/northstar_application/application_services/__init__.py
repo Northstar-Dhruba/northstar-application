@@ -437,6 +437,19 @@ from northstar_application.application_services.run_paper_trading_decision impor
     PaperTradingResult,
     RunPaperTradingDecisionUseCase,
 )
+from northstar_application.application_services.schedule_equity_intraday_research import (
+    EQUITY_INTRADAY_RESEARCH_TIMELINE_ENTRY_PREFIX,
+    EquityIntradayResearchScheduleItem,
+    EquityIntradayResearchScheduleOutcome,
+    EquityIntradayResearchScheduleRefusal,
+    EquityIntradayResearchScheduleResult,
+    EquityIntradayResearchTimeline,
+    EquityIntradayResearchTimelineEntry,
+    EquityIntradayResearchTimelineIdentity,
+    EquityIntradayResearchTimelineRole,
+    InvalidEquityIntradayResearchTimelineError,
+    ScheduleEquityIntradayResearchUseCase,
+)
 from northstar_application.application_services.simulate_futures_paper_order_fill import (
     SimulateFuturesPaperOrderFillUseCase,
 )
@@ -511,6 +524,17 @@ __all__ = [
     "EvaluateEquityIntradayResearchUseCase",
     "InvalidEquityIntradayResearchConfigurationError",
     "InvalidEquityIntradayResearchDecisionError",
+    "EQUITY_INTRADAY_RESEARCH_TIMELINE_ENTRY_PREFIX",
+    "EquityIntradayResearchScheduleItem",
+    "EquityIntradayResearchScheduleOutcome",
+    "EquityIntradayResearchScheduleRefusal",
+    "EquityIntradayResearchScheduleResult",
+    "EquityIntradayResearchTimeline",
+    "EquityIntradayResearchTimelineEntry",
+    "EquityIntradayResearchTimelineIdentity",
+    "EquityIntradayResearchTimelineRole",
+    "InvalidEquityIntradayResearchTimelineError",
+    "ScheduleEquityIntradayResearchUseCase",
     "NO_APPROVED_EQUITY_CANDLE_FINALITY",
     "EquityCandleCoverage",
     "EquityCandleFinalityEvidence",
