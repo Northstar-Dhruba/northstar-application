@@ -105,9 +105,15 @@ class EquitySyntheticEntryTimingPolicy:
       permissible entry-bar opening to the modeled exit boundary.
     - ``research_window_policy_version``: the research window whose grid the
       entry bars come from; a candidate under another window is not covered.
+    - ``modeled_issuance_latency``: the synthetic delay from a research
+      decision's availability -- its ``decision_as_of`` -- to its modeled
+      issuance (EI4-D9-C). Modeled issuance is always derived from it, never
+      supplied by a caller. It is non-negative and exact to the microsecond,
+      the finest precision a PointInTime carries.
 
     Only normal sessions are covered: a special or shortened session is
-    refused, never re-timed. No value here is an approved production cutoff.
+    refused, never re-timed. No value here is an approved production cutoff
+    or latency.
     """
 
     version: EquitySyntheticVersion
@@ -117,6 +123,7 @@ class EquitySyntheticEntryTimingPolicy:
     latest_entry_bar_opening: time
     modeled_exit_boundary: time
     minimum_remaining_session: timedelta
+    modeled_issuance_latency: timedelta
 
     def __post_init__(self) -> None:
         subject = "EquitySyntheticEntryTimingPolicy"
@@ -139,11 +146,19 @@ class EquitySyntheticEntryTimingPolicy:
             _fail(f"{subject} minimum_remaining_session must be at least one five-minute bar.")
         if remaining % timedelta(minutes=1):
             _fail(f"{subject} minimum_remaining_session must be whole minutes.")
+        latency = self.modeled_issuance_latency
+        if not isinstance(latency, timedelta) or latency < timedelta(0):
+            _fail(f"{subject} modeled_issuance_latency must be a non-negative timedelta.")
 
     @property
     def is_synthetic(self) -> bool:
         """Return True: no value here is an approved cutoff (EI0-D7)."""
         return True
+
+    @property
+    def modeled_issuance_latency_microseconds(self) -> int:
+        """Return the modeled issuance latency as an exact whole number of microseconds."""
+        return self.modeled_issuance_latency // timedelta(microseconds=1)
 
     def document(self) -> dict[str, object]:
         """Return the canonical content."""
@@ -156,6 +171,7 @@ class EquitySyntheticEntryTimingPolicy:
             "modeled_exit_boundary": self.modeled_exit_boundary.isoformat(),
             "minimum_remaining_session_minutes": self.minimum_remaining_session
             // timedelta(minutes=1),
+            "modeled_issuance_latency_microseconds": self.modeled_issuance_latency_microseconds,
         }
 
 
@@ -278,10 +294,12 @@ class EquityPriorSessionRecommendation:
 
     Only an authoritatively recorded issuance -- actual, or an explicitly
     modeled issuance that was recorded -- is such a record. A transient EI-4C
-    proposal is never one. ``issued_at`` is the recorded issuance instant.
-    It carries no outcome: until EI-5 provides lifecycle state, a record is
-    treated as open from ``issued_at`` (EI4-D8), whatever its levels might
-    have touched.
+    proposal is never one. ``issued_at`` is the event-time issuance instant.
+    ``recording_sequence`` is the authority's own recording order: the
+    position at which the record was written, independent of ``issued_at``
+    (EI4-D9-H). It carries no outcome: until EI-5 provides lifecycle state, a
+    record is treated as open from ``issued_at`` (EI4-D8), whatever its levels
+    might have touched.
     """
 
     recommendation_key: str
@@ -290,10 +308,14 @@ class EquityPriorSessionRecommendation:
     trading_date: date
     issuance_kind: EquityIssuanceKind
     issued_at: PointInTime
+    recording_sequence: int
 
     def __post_init__(self) -> None:
         subject = "EquityPriorSessionRecommendation"
         _text(self.recommendation_key, subject, "recommendation_key")
+        sequence = self.recording_sequence
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+            _fail(f"{subject} recording_sequence must be an integer of at least 1.")
         if not isinstance(self.strategy, StrategyIdentity):
             _fail(f"{subject} strategy must be a StrategyIdentity.")
         if not isinstance(self.listing, ListingReference):
@@ -316,6 +338,7 @@ class EquityPriorSessionRecommendation:
             "trading_date": self.trading_date.isoformat(),
             "issuance_kind": self.issuance_kind.value,
             "issued_at": self.issued_at.value,
+            "recording_sequence": self.recording_sequence,
         }
 
 
@@ -329,10 +352,19 @@ def _issued_order(record: EquityPriorSessionRecommendation) -> tuple[datetime, s
 class EquitySessionRecommendationHistory:
     """The authoritative record of recommendations issued in one venue session.
 
-    ``complete_through`` is the instant through which the record is complete:
-    every recommendation issued in the session at or before it is listed, and
-    none is listed after it. Records are in ascending (issued_at, key) order,
-    so records sharing an instant have one deterministic order.
+    Three things are distinct (EI4-D9-H):
+
+    - each record's ``issued_at``, the event-time issuance instant;
+    - ``complete_through``, the event-time instant through which the record is
+      complete: every recommendation issued in the session at or before it is
+      listed, and none is listed after it;
+    - ``recording_watermark``, the authority's recording position this record
+      was observed at: it lists exactly the records whose
+      ``recording_sequence`` is at or below it, so the same observation can be
+      requested and verified again later. It is never the evaluation time.
+
+    Records are in ascending (issued_at, key) order, so records sharing an
+    instant have one deterministic order. Recording sequences are distinct.
 
     ``issued_by(instant)`` is the point-in-time view: the records issued at or
     before ``instant``, which needs ``complete_through`` at or after it. A
@@ -348,10 +380,14 @@ class EquitySessionRecommendationHistory:
     trading_date: date
     recommendations: tuple[EquityPriorSessionRecommendation, ...]
     complete_through: PointInTime
+    recording_watermark: int
     reference: str
 
     def __post_init__(self) -> None:
         subject = "EquitySessionRecommendationHistory"
+        watermark = self.recording_watermark
+        if isinstance(watermark, bool) or not isinstance(watermark, int) or watermark < 0:
+            _fail(f"{subject} recording_watermark must be a non-negative integer.")
         if not isinstance(self.exchange_code, ExchangeCode):
             _fail(f"{subject} exchange_code must be an ExchangeCode.")
         _plain_date(self.trading_date, subject)
@@ -368,9 +404,14 @@ class EquitySessionRecommendationHistory:
                 _fail(f"{subject} holds a recommendation from another session.")
             if item.issued_at.compare(self.complete_through) > 0:
                 _fail(f"{subject} lists a recommendation issued after it is complete.")
+            if item.recording_sequence > watermark:
+                _fail(f"{subject} lists a recommendation recorded after its recording watermark.")
         keys = [r.recommendation_key for r in self.recommendations]
         if len(set(keys)) != len(keys):
             _fail(f"{subject} recommendation keys must be distinct.")
+        sequences = [r.recording_sequence for r in self.recommendations]
+        if len(set(sequences)) != len(sequences):
+            _fail(f"{subject} recording sequences must be distinct.")
         if list(self.recommendations) != sorted(self.recommendations, key=_issued_order):
             _fail(f"{subject} recommendations must be in ascending (issued_at, key) order.")
         _text(self.reference, subject, "reference")
@@ -451,8 +492,12 @@ class EquitySessionRecommendationHistorySource(ABC):
     """Supplies the authoritative record of a session's issued recommendations (EI4-D8).
 
     ``session_history`` returns the session's record across listings and
-    strategies, complete at least through ``as_of``, or None when no
-    authoritative record is established for it. It raises
+    strategies, complete at least through ``as_of``, stating the recording
+    watermark it was observed at, or None when no authoritative record is
+    established for it. No issued-recommendation authority exists yet
+    (EI4-D9-H): until EI-5 and EI-6 provide one, only explicitly labelled
+    synthetic test fixtures implement this port, and no adapter may assert an
+    empty session because issuance is not built. It raises
     EquityRecommendationHistoryUnavailableError when the record cannot be read
     or verified. It never returns an assumed-empty session, and it never
     states completeness it has not established: a record whose

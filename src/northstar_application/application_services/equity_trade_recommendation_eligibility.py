@@ -1,11 +1,11 @@
-"""Synthetic equity recommendation eligibility contracts and proposal identity (EI-4C).
+"""Synthetic equity recommendation eligibility contracts (EI-4C, EI4-D9 compatible).
 
 The request, outcome vocabulary, proposal and eligibility audit of
 GenerateEquityTradeRecommendationUseCase (generate_equity_trade_recommendation),
 under the owner decisions recorded on 2026-11-07 in the EI-4 Decision Register
-(northstar-docs, product/Equity-Intraday-V1-EI4-Decision-Register.md) and in
-ADR-020. Everything here is synthetic and non-authoritative: nothing is issued,
-persisted, actionable, an order, a fill or a position.
+(northstar-docs, product/Equity-Intraday-V1-EI4-Decision-Register.md), ADR-020
+and ADR-021. Everything here is synthetic and non-authoritative: nothing is
+issued, persisted, actionable, an order, a fill or a position.
 
 Outcomes
 --------
@@ -50,41 +50,32 @@ in declaration order with one status each: PASSED, FAILED, NOT_EVALUATED
 NOT_ASSESSED control is never PASSED, and every proposal names it as blocking
 actionable issuance (EI-4 Decision Register, section 4).
 
-Proposal key
-------------
-A provisional key, derived the way Futures recommendation identities are: a
-length-prefixed SHA-256 over, in this order,
+Identity-bearing content and diagnostics (EI4-D9-C)
+---------------------------------------------------
+``assessment_document()`` is the identity-bearing assessment: the request,
+the generation key, the status and reasons, every check's structured result,
+the candidate evidence, the complete frozen inputs, the modeled entry window,
+Core's outcome and the proposal. Its ``eira1`` fingerprint is
+``assessment_fingerprint``. Check details and the timeline head observed while
+loading are diagnostics: ``diagnostics_document()`` keeps them for inspection,
+and they never move a fingerprint. A later timeline head -- after a
+correction, for example -- therefore never changes a frozen assessment.
 
-    northstar.equity-trade-recommendation-proposal.v1
-    strategy identity
-    research configuration version
-    symbol, exchange code
-    trading date                       (YYYY-MM-DD)
-    first CANDIDATE entry fingerprint  (eirt1)
-    generation-policy version
-
-Each part is its UTF-8 byte length, a colon, then the bytes, so no value can
-make two keys collide. The candidate entry fingerprint binds the timeline's
-full configuration, the decision and its evidence snapshot. Issuance and
-eligibility instants, levels, other policy versions, clock readings, random
-values and row ids are excluded, so one candidate under one generation-policy
-version always reaches one key (EI4-D2: zero or one recommendation per
-version), and the other versions are content: an equal key with different
-content is a contradiction a store must refuse. The key identifies; it
-enforces nothing and proves no issuance. Equal keys never prove equal
-proposals: two proposals under one key may differ in risk, cost, increment,
-timing or eligibility inputs, and in modeled instants. A future store must
-therefore compare the full canonical proposal document under a key and fail
-closed -- record nothing and report the conflict -- when it differs, never
-keeping either silently. Which inputs the authoritative identity binds, and
-how recording is sequenced, is EI4-D9, which is still pending; this key is
-provisional until then.
+Generation identity (EI4-D9-B)
+------------------------------
+A proposal and an assessment are identified by the ``eirk1`` generation key
+of the candidate and the resolved policy set
+(equity_recommendation_generation_evidence). The earlier provisional key,
+``equity_trade_recommendation_proposal_key`` under the namespace
+``northstar.equity-trade-recommendation-proposal.v1``, binds only the
+generation-policy version. It keeps exactly that meaning, is not the
+generation identity and is never reinterpreted.
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
@@ -93,32 +84,31 @@ from northstar_core.domain.value_objects import ListingReference
 from northstar_core.foundation.value_objects import PointInTime
 from northstar_core.recommendations.equity import (
     EquityIssuanceKind,
-    EquityPriceIncrement,
     EquityRecommendationDefinition,
     EquityRecommendationRejection,
     EquityRecommendationRejectionReason,
     EquityRecommendationTiming,
     EquityResearchCandidateReference,
-    EquitySyntheticCostSchedule,
-    EquitySyntheticGenerationPolicy,
-    EquitySyntheticRiskPolicy,
     EquitySyntheticVersion,
 )
 
-from northstar_application.application_services.equity_candle_evidence_journal import (
-    canonical_equity_candle_json,
+from northstar_application.application_services.equity_recommendation_generation_evidence import (
+    EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT,
+    EQUITY_RECOMMENDATION_CORE_OUTCOME_FORMAT,
+    EQUITY_RECOMMENDATION_PROPOSAL_FORMAT,
+    EquityRecommendationCandidateProvenance,
+    EquityRecommendationInputs,
+    EquitySyntheticPolicySetReference,
+    canonical_equity_recommendation_json,
+    equity_recommendation_fingerprint,
+    is_equity_recommendation_generation_key,
 )
 from northstar_application.application_services.evaluate_equity_intraday_research import (
     EquityOpeningRangeBreakoutConfiguration,
 )
-from northstar_application.ports.equity_recommendation_references import (
-    EquityPriorSessionRecommendation,
-    EquitySyntheticEntryTimingPolicy,
-    EquitySyntheticListingEligibility,
-)
 
 EQUITY_TRADE_RECOMMENDATION_PROPOSAL_NAMESPACE = "northstar.equity-trade-recommendation-proposal.v1"
-_AUDIT_FORMAT = "northstar.equity-recommendation-eligibility-audit/1"
+_AUDIT_FORMAT = "northstar.equity-recommendation-eligibility-audit/2"
 
 
 class InvalidEquityTradeRecommendationRequestError(ValueError):
@@ -147,22 +137,18 @@ class EquityTradeRecommendationRequest:
     """What one generation attempt is asked to evaluate. Nothing is inferred or defaulted.
 
     ``configuration`` names the strategy and its full synthetic research
-    configuration; every reference is named by its exact synthetic version.
-    ``modeled_issued_at`` is an explicitly modeled issuance instant for
-    synthetic analysis. It is never an actual issuance, and it must not
-    precede the research decision.
+    configuration. ``policy_set`` names the composite synthetic policy set
+    (EI4-D9-B) and ``listing_eligibility_version`` the synthetic eligibility
+    reference. There is no issuance instant: modeled issuance is always derived
+    from the candidate's decision instant and the policy set's versioned
+    latency (EI4-D9-C), and a caller can never supply or override it.
     """
 
     configuration: EquityOpeningRangeBreakoutConfiguration
     listing: ListingReference
     trading_date: date
-    generation_policy_version: EquitySyntheticVersion
-    risk_policy_version: EquitySyntheticVersion
-    cost_schedule_version: EquitySyntheticVersion
-    price_increment_version: EquitySyntheticVersion
-    timing_policy_version: EquitySyntheticVersion
+    policy_set: EquitySyntheticPolicySetReference
     listing_eligibility_version: EquitySyntheticVersion
-    modeled_issued_at: PointInTime
 
     def __post_init__(self) -> None:
         error = InvalidEquityTradeRecommendationRequestError
@@ -172,11 +158,10 @@ class EquityTradeRecommendationRequest:
             raise error("listing must be a ListingReference.")
         if isinstance(self.trading_date, datetime) or not isinstance(self.trading_date, date):
             raise error("trading_date must be a plain date.")
-        for name in _VERSION_FIELDS:
-            if not isinstance(getattr(self, name), EquitySyntheticVersion):
-                raise error(f"{name} must be an EquitySyntheticVersion.")
-        if not isinstance(self.modeled_issued_at, PointInTime):
-            raise error("modeled_issued_at must be a PointInTime.")
+        if not isinstance(self.policy_set, EquitySyntheticPolicySetReference):
+            raise error("policy_set must be an EquitySyntheticPolicySetReference.")
+        if not isinstance(self.listing_eligibility_version, EquitySyntheticVersion):
+            raise error("listing_eligibility_version must be an EquitySyntheticVersion.")
 
     def document(self) -> dict[str, Any]:
         """Return the canonical content."""
@@ -185,19 +170,9 @@ class EquityTradeRecommendationRequest:
             "research_configuration": self.configuration.document(),
             "listing": _listing(self.listing),
             "trading_date": self.trading_date.isoformat(),
-            **{name: getattr(self, name).value for name in _VERSION_FIELDS},
-            "modeled_issued_at": self.modeled_issued_at.value,
+            "policy_set": self.policy_set.document(),
+            "listing_eligibility_version": self.listing_eligibility_version.value,
         }
-
-
-_VERSION_FIELDS = (
-    "generation_policy_version",
-    "risk_policy_version",
-    "cost_schedule_version",
-    "price_increment_version",
-    "timing_policy_version",
-    "listing_eligibility_version",
-)
 
 
 # ---------------------------------------------------------------------------
@@ -243,10 +218,9 @@ class EquityRecommendationEligibilityReason(StrEnum):
     LISTING_ELIGIBILITY_UNKNOWN = "LISTING_ELIGIBILITY_UNKNOWN"
     OPEN_RECOMMENDATION_STATE_UNAVAILABLE = "OPEN_RECOMMENDATION_STATE_UNAVAILABLE"
     RECOMMENDATION_HISTORY_INCOMPLETE = "RECOMMENDATION_HISTORY_INCOMPLETE"
-    # Timing (EI4-D1, EI0-D7 structure)
+    # Timing (EI4-D1, EI0-D7 structure, EI4-D9-C)
     SESSION_NOT_SUPPORTED = "SESSION_NOT_SUPPORTED"
     TIMING_POLICY_NOT_APPLICABLE = "TIMING_POLICY_NOT_APPLICABLE"
-    MODELED_ISSUANCE_BEFORE_DECISION = "MODELED_ISSUANCE_BEFORE_DECISION"
     AFTER_SIGNAL_CUTOFF = "AFTER_SIGNAL_CUTOFF"
     POST_WINDOW_DECISION = "POST_WINDOW_DECISION"
     NO_PERMISSIBLE_ENTRY_BAR = "NO_PERMISSIBLE_ENTRY_BAR"
@@ -386,7 +360,11 @@ _UNASSESSED = tuple(check for check, _ in EQUITY_RECOMMENDATION_UNASSESSED_CONTR
 
 @dataclass(frozen=True, slots=True)
 class EquityRecommendationCheckResult:
-    """One control's status, its reasons in report order and a deterministic detail."""
+    """One control's status, its reasons in report order and a diagnostic detail.
+
+    ``check``, ``status`` and ``reasons`` are identity-bearing. ``detail`` is
+    human-readable diagnostics and never part of a fingerprint.
+    """
 
     check: EquityRecommendationCheck
     status: EquityRecommendationCheckStatus
@@ -414,14 +392,17 @@ class EquityRecommendationCheckResult:
         if not isinstance(self.detail, str) or not self.detail:
             _invalid("detail must be non-empty text.")
 
-    def document(self) -> dict[str, Any]:
-        """Return the canonical content."""
+    def structured_document(self) -> dict[str, Any]:
+        """Return the identity-bearing content: no diagnostic prose."""
         return {
             "check": self.check.value,
             "status": self.status.value,
             "reasons": [reason.value for reason in self.reasons],
-            "detail": self.detail,
         }
+
+    def document(self) -> dict[str, Any]:
+        """Return the full content, diagnostic detail included."""
+        return {**self.structured_document(), "detail": self.detail}
 
 
 def ordered_equity_recommendation_reasons(
@@ -433,7 +414,7 @@ def ordered_equity_recommendation_reasons(
 
 
 # ---------------------------------------------------------------------------
-# Proposal key
+# The earlier provisional key, unchanged
 # ---------------------------------------------------------------------------
 
 
@@ -448,7 +429,12 @@ def _length_prefixed(parts: tuple[str, ...]) -> bytes:
 def equity_trade_recommendation_proposal_key(
     source: EquityResearchCandidateReference, generation_policy_version: EquitySyntheticVersion
 ) -> str:
-    """Return the provisional key of ``source``'s proposal under ``generation_policy_version``."""
+    """Return the provisional EI-4C key of ``source`` under ``generation_policy_version``.
+
+    It binds only the generation-policy version and keeps exactly the meaning
+    it had before EI4-D9. It is not the generation identity: that is the
+    ``eirk1`` key of equity_recommendation_generation_key.
+    """
     if not isinstance(source, EquityResearchCandidateReference):
         raise TypeError("source must be an EquityResearchCandidateReference.")
     if not isinstance(generation_policy_version, EquitySyntheticVersion):
@@ -467,57 +453,33 @@ def equity_trade_recommendation_proposal_key(
 
 
 # ---------------------------------------------------------------------------
-# Candidate, entry window and proposal
+# Entry window and proposal
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class EquityRecommendationCandidateProvenance:
-    """The authoritative candidate an attempt evaluated, and what verified it.
-
-    ``source`` is the Core reference; the rest pins the evidence and history it
-    was read from: the snapshot's manifest fingerprint, the candidate's
-    position and the verified timeline head at evaluation.
-    """
-
-    source: EquityResearchCandidateReference
-    manifest_fingerprint: str
-    candidate_sequence: int
-    timeline_head_fingerprint: str
-    signal_interval_end: PointInTime
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.source, EquityResearchCandidateReference):
-            _invalid("source must be an EquityResearchCandidateReference.")
-        for name in ("manifest_fingerprint", "timeline_head_fingerprint"):
-            if not isinstance(getattr(self, name), str) or not getattr(self, name):
-                _invalid(f"{name} must be non-empty text.")
-        sequence = self.candidate_sequence
-        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
-            _invalid("candidate_sequence must be an integer of at least 1.")
-        if not isinstance(self.signal_interval_end, PointInTime):
-            _invalid("signal_interval_end must be a PointInTime.")
-
-    def document(self) -> dict[str, Any]:
-        """Return the canonical content."""
-        return {
-            "source": self.source.document(),
-            "manifest_fingerprint": self.manifest_fingerprint,
-            "candidate_sequence": self.candidate_sequence,
-            "timeline_head_fingerprint": self.timeline_head_fingerprint,
-            "signal_interval_end": self.signal_interval_end.value,
-        }
+def equity_core_outcome_document(
+    core: EquityRecommendationDefinition | EquityRecommendationRejection,
+) -> dict[str, Any]:
+    """Return Core's formation outcome in a versioned Application envelope."""
+    if not isinstance(core, EquityRecommendationDefinition | EquityRecommendationRejection):
+        raise TypeError("core must be a Core definition or rejection.")
+    return {
+        "format": EQUITY_RECOMMENDATION_CORE_OUTCOME_FORMAT,
+        "kind": "DEFINITION" if isinstance(core, EquityRecommendationDefinition) else "REJECTION",
+        "outcome": core.document(),
+    }
 
 
 @dataclass(frozen=True, slots=True)
 class EquityModeledEntryWindow:
     """The modeled instants of a proposal and the bounds of its entry eligibility.
 
-    ``timing`` is Core's EI4-D1 timing with a MODELED issuance; its
-    ``eligible_from`` is the earliest full entry bar opening at or after the
-    modeled issuance. No bar opening after ``latest_entry_bar_opens_at`` may
-    evidence an entry, and ``modeled_exit_at`` is the mandatory modeled exit
-    boundary. Nothing here scans bars or touches levels.
+    ``timing`` is Core's EI4-D1 timing with a MODELED issuance derived from
+    the policy set's latency; its ``eligible_from`` is the earliest full entry
+    bar opening at or after that issuance. No bar opening after
+    ``latest_entry_bar_opens_at`` may evidence an entry, and
+    ``modeled_exit_at`` is the mandatory modeled exit boundary. Nothing here
+    scans bars or touches levels.
     """
 
     timing: EquityRecommendationTiming
@@ -558,35 +520,35 @@ class EquityTradeRecommendationProposal:
     execution permission: it is not issued, not recorded, not actionable,
     and every control in ``not_assessed`` still blocks actionable issuance.
 
-    ``proposal_key`` identifies the candidate under the generation-policy
-    version only. It does not identify this content: compare ``document()``
-    to tell two proposals under one key apart.
+    ``generation_key`` identifies the candidate under the policy set
+    (EI4-D9-B). It does not identify this content: ``fingerprint``, over the
+    format-versioned ``document()``, does. Equal keys never prove equal
+    proposals.
     """
 
-    proposal_key: str
+    generation_key: str
     definition: EquityRecommendationDefinition
     entry_window: EquityModeledEntryWindow
     listing_eligibility_version: EquitySyntheticVersion
     universe_version: EquitySyntheticVersion
     not_assessed: tuple[EquityRecommendationCheck, ...]
+    fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if not is_equity_recommendation_generation_key(self.generation_key):
+            _invalid("generation_key must be an eirk1 generation key.")
         if not isinstance(self.definition, EquityRecommendationDefinition):
             _invalid("definition must be an EquityRecommendationDefinition.")
         if not isinstance(self.entry_window, EquityModeledEntryWindow):
             _invalid("entry_window must be an EquityModeledEntryWindow.")
-        source = self.definition.source
-        if self.proposal_key != equity_trade_recommendation_proposal_key(
-            source, self.definition.generation_policy_version
-        ):
-            _invalid("proposal_key must be derived from the candidate and generation policy.")
-        if self.entry_window.timing.decision_as_of != source.decision_as_of:
+        if self.entry_window.timing.decision_as_of != self.definition.source.decision_as_of:
             _invalid("The modeled timing must start at the candidate's decision instant.")
         for name in ("listing_eligibility_version", "universe_version"):
             if not isinstance(getattr(self, name), EquitySyntheticVersion):
                 _invalid(f"{name} must be an EquitySyntheticVersion.")
         if self.not_assessed != _UNASSESSED:
             _invalid("A proposal names every control that is not assessed yet.")
+        object.__setattr__(self, "fingerprint", equity_recommendation_fingerprint(self.document()))
 
     @property
     def is_synthetic(self) -> bool:
@@ -609,94 +571,19 @@ class EquityTradeRecommendationProposal:
         return False
 
     def document(self) -> dict[str, Any]:
-        """Return the canonical content."""
+        """Return the canonical, format-versioned content."""
         return {
-            "proposal_key": self.proposal_key,
+            "format": EQUITY_RECOMMENDATION_PROPOSAL_FORMAT,
+            "generation_key": self.generation_key,
             "synthetic": True,
             "authoritative": False,
             "issued": False,
             "actionable": False,
-            "definition": self.definition.document(),
+            "definition": equity_core_outcome_document(self.definition),
             "entry_window": self.entry_window.document(),
             "listing_eligibility_version": self.listing_eligibility_version.value,
             "universe_version": self.universe_version.value,
             "not_assessed": [check.value for check in self.not_assessed],
-        }
-
-
-# ---------------------------------------------------------------------------
-# Inputs
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class EquityRecommendationInputs:
-    """Every synthetic input an attempt applied, and the history it read, as found.
-
-    The full documents are kept, not only their versions, so the audit shows
-    exactly what was applied. ``open_recommendations`` is the point-in-time
-    view of the session record: the recommendations issued at or before the
-    modeled issuance, in (issued_at, key) order, each treated as open
-    (EI4-D8). ``history_complete_through`` is the instant through which that
-    record was complete.
-    """
-
-    timing_policy: EquitySyntheticEntryTimingPolicy
-    generation_policy: EquitySyntheticGenerationPolicy
-    risk_policy: EquitySyntheticRiskPolicy
-    cost_schedule: EquitySyntheticCostSchedule
-    price_increment: EquityPriceIncrement
-    listing_eligibility: EquitySyntheticListingEligibility
-    venue_reference: str
-    history_reference: str
-    history_complete_through: PointInTime
-    open_recommendations: tuple[EquityPriorSessionRecommendation, ...]
-
-    def __post_init__(self) -> None:
-        for name, kind in (
-            ("timing_policy", EquitySyntheticEntryTimingPolicy),
-            ("generation_policy", EquitySyntheticGenerationPolicy),
-            ("risk_policy", EquitySyntheticRiskPolicy),
-            ("cost_schedule", EquitySyntheticCostSchedule),
-            ("price_increment", EquityPriceIncrement),
-            ("listing_eligibility", EquitySyntheticListingEligibility),
-        ):
-            if not isinstance(getattr(self, name), kind):
-                _invalid(f"{name} must be an {kind.__name__}.")
-        for name in ("venue_reference", "history_reference"):
-            if not isinstance(getattr(self, name), str) or not getattr(self, name):
-                _invalid(f"{name} must be non-empty text.")
-        if not isinstance(self.history_complete_through, PointInTime):
-            _invalid("history_complete_through must be a PointInTime.")
-        if not isinstance(self.open_recommendations, tuple) or not all(
-            isinstance(r, EquityPriorSessionRecommendation) for r in self.open_recommendations
-        ):
-            _invalid("open_recommendations must be a tuple of EquityPriorSessionRecommendation.")
-
-    def versions(self) -> dict[str, EquitySyntheticVersion]:
-        """Return each applied input's version, keyed like the request's version fields."""
-        return {
-            "generation_policy_version": self.generation_policy.version,
-            "risk_policy_version": self.risk_policy.version,
-            "cost_schedule_version": self.cost_schedule.version,
-            "price_increment_version": self.price_increment.version,
-            "timing_policy_version": self.timing_policy.version,
-            "listing_eligibility_version": self.listing_eligibility.version,
-        }
-
-    def document(self) -> dict[str, Any]:
-        """Return the canonical content."""
-        return {
-            "timing_policy": self.timing_policy.document(),
-            "generation_policy": self.generation_policy.document(),
-            "risk_policy": self.risk_policy.document(),
-            "cost_schedule": self.cost_schedule.document(),
-            "price_increment": self.price_increment.document(),
-            "listing_eligibility": self.listing_eligibility.document(),
-            "venue_reference": self.venue_reference,
-            "history_reference": self.history_reference,
-            "history_complete_through": self.history_complete_through.value,
-            "open_recommendations": [r.document() for r in self.open_recommendations],
         }
 
 
@@ -710,11 +597,13 @@ class EquityRecommendationEligibilityAudit:
     """The immutable eligibility audit of one generation attempt.
 
     It records the request, every check in declaration order, the candidate
-    evaluated (when one was), every input applied and the point-in-time
-    history read (when all loaded), the modeled entry window (when timing
-    passed), Core's formation outcome (when Core ran) and the proposal (when
-    PROPOSED). ``status`` and ``reasons`` are derived from the checks. It is
-    suitable for later EI-4D persistence but is not persisted, and it is not
+    evaluated (when one was), the complete frozen inputs (when all loaded),
+    the modeled entry window (when timing passed), Core's formation outcome
+    (when Core ran) and the proposal (when PROPOSED). ``status`` and
+    ``reasons`` are derived from the checks. ``observed_timeline_head`` is the
+    timeline head seen while loading: diagnostics only, never identity.
+
+    It is suitable for EI-4D persistence but is not persisted, and it is not
     authoritative.
     """
 
@@ -725,6 +614,7 @@ class EquityRecommendationEligibilityAudit:
     entry_window: EquityModeledEntryWindow | None
     core_outcome: EquityRecommendationDefinition | EquityRecommendationRejection | None
     proposal: EquityTradeRecommendationProposal | None
+    observed_timeline_head: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.request, EquityTradeRecommendationRequest):
@@ -742,6 +632,10 @@ class EquityRecommendationEligibilityAudit:
             self.entry_window, EquityModeledEntryWindow
         ):
             _invalid("entry_window must be an EquityModeledEntryWindow or None.")
+        if self.observed_timeline_head is not None and not (
+            isinstance(self.observed_timeline_head, str) and self.observed_timeline_head
+        ):
+            _invalid("observed_timeline_head must be non-empty text or None.")
         core = self.core_outcome
         if core is not None and not isinstance(
             core, EquityRecommendationDefinition | EquityRecommendationRejection
@@ -764,19 +658,30 @@ class EquityRecommendationEligibilityAudit:
             _invalid("A Core formation reason needs a Core rejection.")
         if core is not None and (self.candidate is None or core.source != self.candidate.source):
             _invalid("Core can only have run on the audited candidate.")
+        self._check_inputs()
+
+    def _check_inputs(self) -> None:
         inputs = self.inputs
-        if inputs is not None:
-            if not isinstance(inputs, EquityRecommendationInputs):
-                _invalid("inputs must be EquityRecommendationInputs or None.")
-            if self.candidate is None:
-                _invalid("Inputs are loaded only for an audited candidate.")
-            if any(
-                getattr(self.request, name) != version
-                for name, version in inputs.versions().items()
-            ):
-                _invalid("Every applied input must be the requested version.")
-        elif self.entry_window is not None or core is not None:
-            _invalid("Timing and Core formation run only on loaded inputs.")
+        if inputs is None:
+            if self.entry_window is not None or self.core_outcome is not None:
+                _invalid("Timing and Core formation run only on loaded inputs.")
+            return
+        if not isinstance(inputs, EquityRecommendationInputs):
+            _invalid("inputs must be EquityRecommendationInputs or None.")
+        if inputs.candidate != self.candidate:
+            _invalid("The inputs must hold the audited candidate.")
+        if inputs.policy_set.reference != self.request.policy_set:
+            _invalid("The applied policy set must be the requested one.")
+        if inputs.listing_eligibility.version != self.request.listing_eligibility_version:
+            _invalid("The applied listing eligibility must be the requested version.")
+        window = self.entry_window
+        if window is not None and (
+            window.timing.issued_at != inputs.modeled_issued_at
+            or window.timing_policy_version != inputs.policy_set.timing_policy.version
+        ):
+            _invalid("The entry window must use the inputs' derived modeled issuance.")
+        if self.proposal is not None and self.proposal.generation_key != inputs.generation_key:
+            _invalid("The proposal must carry the inputs' generation key.")
 
     @property
     def reasons(self) -> tuple[EquityRecommendationEligibilityReason, ...]:
@@ -791,6 +696,11 @@ class EquityRecommendationEligibilityAudit:
         return equity_recommendation_status(self.reasons)
 
     @property
+    def generation_key(self) -> str | None:
+        """Return the generation key, when the candidate and policy set were established."""
+        return None if self.inputs is None else self.inputs.generation_key
+
+    @property
     def core_reasons(self) -> tuple[str, ...]:
         """Return Core's exact reasons, when Core rejected or could not resolve the candidate."""
         core = self.core_outcome
@@ -803,31 +713,49 @@ class EquityRecommendationEligibilityAudit:
         """Return False: no audit is recorded before EI-4D."""
         return False
 
-    def document(self) -> dict[str, Any]:
-        """Return the canonical content."""
+    def assessment_document(self) -> dict[str, Any]:
+        """Return the identity-bearing, format-versioned assessment (no diagnostics)."""
         core = self.core_outcome
+        proposal = self.proposal
         return {
-            "format": _AUDIT_FORMAT,
+            "format": EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT,
             "synthetic": True,
             "authoritative": False,
             "request": self.request.document(),
+            "generation_key": self.generation_key,
             "status": self.status.value,
             "reasons": [reason.value for reason in self.reasons],
-            "checks": [check.document() for check in self.checks],
+            "checks": [check.structured_document() for check in self.checks],
             "candidate": None if self.candidate is None else self.candidate.document(),
             "inputs": None if self.inputs is None else self.inputs.document(),
+            "inputs_fingerprint": None if self.inputs is None else self.inputs.fingerprint,
             "entry_window": None if self.entry_window is None else self.entry_window.document(),
-            "core_outcome": None
-            if core is None
-            else {
-                "kind": "DEFINITION"
-                if isinstance(core, EquityRecommendationDefinition)
-                else "REJECTION",
-                **core.document(),
-            },
-            "proposal": None if self.proposal is None else self.proposal.document(),
+            "core_outcome": None if core is None else equity_core_outcome_document(core),
+            "proposal": None if proposal is None else proposal.document(),
+            "proposal_fingerprint": None if proposal is None else proposal.fingerprint,
+        }
+
+    @property
+    def assessment_fingerprint(self) -> str:
+        """Return the ``eira1`` fingerprint of the identity-bearing assessment."""
+        return equity_recommendation_fingerprint(self.assessment_document())
+
+    def diagnostics_document(self) -> dict[str, Any]:
+        """Return the diagnostics: check details and the observed timeline head."""
+        return {
+            "observed_timeline_head": self.observed_timeline_head,
+            "details": {check.check.value: check.detail for check in self.checks},
+        }
+
+    def document(self) -> dict[str, Any]:
+        """Return the full audit: the assessment, its fingerprint and the diagnostics."""
+        return {
+            "format": _AUDIT_FORMAT,
+            "assessment": self.assessment_document(),
+            "assessment_fingerprint": self.assessment_fingerprint,
+            "diagnostics": self.diagnostics_document(),
         }
 
     def canonical_json(self) -> str:
         """Return the canonical JSON text of ``document()``."""
-        return canonical_equity_candle_json(self.document())
+        return canonical_equity_recommendation_json(self.document())
