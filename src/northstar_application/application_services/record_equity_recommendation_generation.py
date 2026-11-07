@@ -45,7 +45,12 @@ once, authoritatively:
 Attempt-only results -- integrity failures, outages, no candidate, and early
 refusals with no generation identity -- are recorded with ``record_attempt``
 and reconciled the same way, by reloading their attempt identity. The
-absence of a disposition is never evidence about an attempt.
+absence of a disposition is never evidence about an attempt. A stored record
+that does not construct is never authoritative: met during a write -- of a
+disposition or of an attempt alone -- it is STORED_RECORD_INVALID, or
+STORED_RECORD_INCOMPATIBLE for an unsupported format, with
+``attempt_recorded`` unknown (None); met during a reload it leaves the commit
+unresolved. It is never equivalent, retried, repaired or migrated.
 
 Every outcome is typed (EquityRecommendationRecordingOutcome). Storage
 outcomes are deliberately distinct from generation outcomes: a
@@ -245,10 +250,17 @@ class RecordEquityRecommendationGenerationUseCase:
                 )
             except EquityRecommendationGenerationNotCommittedError as exc:
                 return result(_O.NOT_COMMITTED, f"Rolled back: {exc}", writes=write)
+            # A stored row -- the disposition or the attempt -- does not construct.
+            # This write is not confirmed, and whether the attempt is durably
+            # recorded cannot be verified: unknown (None), neither True nor False.
             except IncompatibleEquityRecommendationRecordError as exc:
-                return result(_O.STORED_RECORD_INCOMPATIBLE, str(exc), writes=write)
+                return result(
+                    _O.STORED_RECORD_INCOMPATIBLE, str(exc), attempt_recorded=None, writes=write
+                )
             except InvalidEquityRecommendationRecordError as exc:
-                return result(_O.STORED_RECORD_INVALID, str(exc), writes=write)
+                return result(
+                    _O.STORED_RECORD_INVALID, str(exc), attempt_recorded=None, writes=write
+                )
             except EquityRecommendationGenerationCommitUnconfirmedError as exc:
                 try:
                     found = self._store.load_disposition(key)
@@ -461,6 +473,24 @@ class RecordEquityRecommendationGenerationUseCase:
                     _O.NOT_COMMITTED,
                     f"Rolled back; the attempt is not audited: {exc}",
                     attempt_recorded=False,
+                    writes=write,
+                )
+            except IncompatibleEquityRecommendationRecordError as exc:
+                # A row under this identity does not construct, so whether the
+                # attempt is durably recorded cannot be verified: unknown, never True.
+                return result(
+                    _O.STORED_RECORD_INCOMPATIBLE,
+                    "The attempt stored under this identity has an unsupported format; it is "
+                    f"not migrated, and this attempt is not shown to be recorded: {exc}",
+                    attempt_recorded=None,
+                    writes=write,
+                )
+            except InvalidEquityRecommendationRecordError as exc:
+                return result(
+                    _O.STORED_RECORD_INVALID,
+                    "The attempt stored under this identity does not decode; it is not "
+                    f"repaired, and this attempt is not shown to be recorded: {exc}",
+                    attempt_recorded=None,
                     writes=write,
                 )
             except EquityRecommendationGenerationCommitUnconfirmedError as exc:

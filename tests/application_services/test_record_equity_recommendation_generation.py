@@ -109,6 +109,10 @@ class _Store(EquityRecommendationGenerationStore):
 
     ``before_write`` and ``before_load`` hooks run once each -- a competing
     writer committing first. ``load_failure`` makes every load fail.
+    ``corrupt_attempts`` maps an attempt identity to "undecodable" or
+    "incompatible": a stored row under it that does not construct. Like the
+    SQLite adapter, reading it -- in a load or inside a write, which then
+    rolls back -- raises the typed record error.
     """
 
     def __init__(self) -> None:
@@ -118,6 +122,7 @@ class _Store(EquityRecommendationGenerationStore):
         self.before_write: list[Callable[[], object]] = []
         self.before_load: list[Callable[[], object]] = []
         self.load_failure: str | None = None
+        self.corrupt_attempts: dict[str, str] = {}
         self.writes = 0
 
     def _fail_load(self) -> None:
@@ -134,8 +139,16 @@ class _Store(EquityRecommendationGenerationStore):
         self._fail_load()
         return self.dispositions.get(generation_key)
 
+    def _corrupt(self, attempt_identity: str) -> None:
+        mode = self.corrupt_attempts.get(attempt_identity)
+        if mode == "undecodable":
+            raise InvalidEquityRecommendationRecordError("test: the stored attempt does not decode")
+        if mode == "incompatible":
+            raise IncompatibleEquityRecommendationRecordError("test: a future attempt format")
+
     def load_attempt(self, attempt_identity: str) -> Attempt | None:
         self._fail_load()
+        self._corrupt(attempt_identity)
         return self.attempts.get(attempt_identity)
 
     def _behaviour(self) -> str:
@@ -156,6 +169,7 @@ class _Store(EquityRecommendationGenerationStore):
         return mode
 
     def _insert_attempt(self, attempt: Attempt) -> bool:
+        self._corrupt(attempt.attempt_identity)  # raised before anything is written
         if attempt.attempt_identity in self.attempts:
             return False
         self.attempts[attempt.attempt_identity] = attempt
@@ -1223,3 +1237,264 @@ def test_evaluator_9_fingerprint_formats_are_unchanged() -> None:
     assert current.assessment_fingerprint == audit.assessment_fingerprint
     assert audit.proposal is not None
     assert current.proposal_fingerprint == audit.proposal.fingerprint
+
+
+# ----------------------------------------------------------------------
+# W1 -- attempt-only stored-record errors
+#
+# A stored attempt that does not construct is never authoritative: it is
+# never reported as equivalent, never repaired or migrated, and never counted
+# as recording this attempt. Invalid and incompatible stay distinct, as on the
+# disposition path; an unverifiable reload stays unresolved; and unexpected
+# errors are never turned into an outcome.
+# ----------------------------------------------------------------------
+
+
+def _attempt_only() -> tuple[ei4c._Ports, EquityRecommendationEligibilityAudit, Attempt]:
+    never = ei4c._Ports(ei4c._World())
+    audit = never.run()
+    assert audit.status is _S.NO_CANDIDATE and audit.generation_key is None
+    return never, audit, equity_recommendation_attempt(audit)
+
+
+def test_w1_1_a_valid_identical_stored_attempt_is_idempotent() -> None:
+    ports_, audit, attempt = _attempt_only()
+    store = _Store()
+    store.attempts[attempt.attempt_identity] = attempt
+    result = _recorder(ports_, store).execute(audit)
+    assert (result.outcome, result.attempt_recorded, result.writes) == (
+        _O.EQUIVALENT_COMMITTED,
+        True,
+        1,
+    )
+    assert store.attempts == {attempt.attempt_identity: attempt} and store.dispositions == {}
+
+
+_UNCONSTRUCTIBLE = [
+    ("undecodable", _O.STORED_RECORD_INVALID),
+    ("incompatible", _O.STORED_RECORD_INCOMPATIBLE),
+]
+
+
+@pytest.mark.parametrize(("corruption", "outcome"), _UNCONSTRUCTIBLE)
+def test_w1_2_3_9_10_an_unconstructible_stored_attempt_fails_closed(corruption, outcome) -> None:  # type: ignore[no-untyped-def]
+    ports_, audit, attempt = _attempt_only()
+    store = _Store()
+    store.corrupt_attempts[attempt.attempt_identity] = corruption
+    result = _recorder(ports_, store).execute(audit)
+    assert result.outcome is outcome and not result.is_stored
+    # A row exists under the identity but cannot be verified: unknown, never True.
+    assert result.attempt_recorded is None
+    assert (result.writes, result.reconciled, store.writes) == (1, False, 1)  # no retry
+    assert result.disposition is None and result.authoritative is None
+    # Nothing repaired, replaced or migrated; no disposition for an attempt-only result.
+    assert store.attempts == {} and store.dispositions == {}
+    assert store.corrupt_attempts == {attempt.attempt_identity: corruption}
+
+
+@pytest.mark.parametrize("corruption", ["undecodable", "incompatible"])
+def test_w1_4_5_an_unconstructible_attempt_found_on_reload_is_unresolved(corruption) -> None:  # type: ignore[no-untyped-def]
+    ports_, audit, attempt = _attempt_only()
+    store = _Store()
+    store.script = ["lost_before"]  # COMMIT unconfirmed; the reload reads the stored row
+    store.corrupt_attempts[attempt.attempt_identity] = corruption
+    result = _recorder(ports_, store).execute(audit)
+    assert result.outcome is _O.COMMIT_RECONCILIATION_UNRESOLVED and not result.is_stored
+    assert (result.attempt_recorded, result.reconciled, result.writes) == (None, True, 1)
+    assert "test:" in result.detail  # the typed reload error is reported, not swallowed
+    assert store.attempts == {} and store.dispositions == {}
+
+
+def test_w1_6_a_valid_attempt_found_after_a_lost_acknowledgment_is_committed() -> None:
+    ports_, audit, attempt = _attempt_only()
+    store = _Store()
+    store.script = ["lost_after"]
+    result = _recorder(ports_, store).execute(audit)
+    assert (result.outcome, result.attempt_recorded, result.reconciled, result.writes) == (
+        _O.EQUIVALENT_COMMITTED,
+        True,
+        True,
+        1,
+    )
+    assert store.attempts == {attempt.attempt_identity: attempt}
+
+
+def test_w1_7_an_attempt_absent_after_a_verified_reload_is_written_again() -> None:
+    ports_, audit, attempt = _attempt_only()
+    store = _Store()
+    store.script = ["lost_before"]
+    result = _recorder(ports_, store).execute(audit)
+    assert (result.outcome, result.attempt_recorded, result.writes) == (_O.COMMITTED, True, 2)
+    assert store.attempts == {attempt.attempt_identity: attempt} and store.writes == 2
+
+
+def test_w1_8_an_unavailable_reload_is_unresolved_never_a_rollback() -> None:
+    ports_, audit, attempt = _attempt_only()
+    store = _Store()
+    store.script = ["lost_after"]
+    store.load_failure = "unavailable"
+    result = _recorder(ports_, store).execute(audit)
+    assert result.outcome is _O.COMMIT_RECONCILIATION_UNRESOLVED
+    assert (result.attempt_recorded, store.writes) == (None, 1)  # not retried as if rolled back
+    assert store.attempts == {attempt.attempt_identity: attempt}  # it had in fact committed
+
+
+class _CorruptedAfterReload(_Store):
+    """Test-only: the reload finds nothing; by the retry, an unconstructible row is stored."""
+
+    def __init__(self, corruption: str) -> None:
+        super().__init__()
+        self._corruption = corruption
+
+    def load_attempt(self, attempt_identity: str) -> Attempt | None:
+        found = super().load_attempt(attempt_identity)
+        self.corrupt_attempts[attempt_identity] = self._corruption
+        return found
+
+
+@pytest.mark.parametrize(("corruption", "outcome"), _UNCONSTRUCTIBLE)
+def test_w1_9_a_retry_that_reads_an_unconstructible_attempt_is_never_committed(
+    corruption,  # type: ignore[no-untyped-def]
+    outcome,
+) -> None:
+    ports_, audit, _ = _attempt_only()
+    store = _CorruptedAfterReload(corruption)
+    store.script = ["lost_before"]
+    result = _recorder(ports_, store).execute(audit)
+    assert result.outcome is outcome and not result.is_stored
+    assert (result.attempt_recorded, result.writes, store.writes) == (None, 2, 2)
+    assert store.attempts == {} and store.dispositions == {}
+
+
+def test_w1_11_12_the_disposition_path_records_and_never_creates_attempt_only_dispositions() -> (
+    None
+):
+    ports_, audit = ei4c._proposed()
+    store = _Store()
+    assert _recorder(ports_, store).execute(audit).outcome is _O.COMMITTED
+    assert len(store.dispositions) == 1 and len(store.attempts) == 1
+    _, attempt_only, _ = _attempt_only()
+    assert _recorder(ports_, store).execute(attempt_only).outcome is _O.COMMITTED
+    assert len(store.dispositions) == 1 and len(store.attempts) == 2
+
+
+@pytest.mark.parametrize(("corruption", "outcome"), _UNCONSTRUCTIBLE)
+@pytest.mark.parametrize("disposition_stored", [False, True])
+def test_w1_16_a_disposition_write_meeting_an_unconstructible_attempt_is_unknown(
+    corruption,  # type: ignore[no-untyped-def]
+    outcome,
+    disposition_stored: bool,
+) -> None:
+    ports_, audit = ei4c._proposed()
+    disposition = equity_recommendation_disposition(audit)
+    attempt = equity_recommendation_attempt(audit)
+    assert disposition is not None
+    store = _Store()
+    if disposition_stored:
+        store.dispositions[disposition.generation_key] = disposition
+    store.corrupt_attempts[attempt.attempt_identity] = corruption
+    before = dict(store.dispositions)
+    result = _recorder(ports_, store).execute(audit)
+    assert result.outcome is outcome and not result.is_stored
+    assert result.attempt_recorded is None  # a row exists under the identity, unverified
+    assert result.authoritative is None and result.writes == 1 and store.writes == 1
+    # Nothing written, repaired or replaced: no new disposition, no new attempt.
+    assert store.dispositions == before and store.attempts == {}
+    assert store.corrupt_attempts == {attempt.attempt_identity: corruption}
+
+
+@pytest.mark.parametrize(("corruption", "outcome"), _UNCONSTRUCTIBLE)
+def test_w1_17_a_disposition_write_meeting_an_unconstructible_disposition_is_unknown(
+    corruption,  # type: ignore[no-untyped-def]
+    outcome,
+) -> None:
+    ports_, audit = ei4c._proposed()
+    store = _Store()
+    store.script = [corruption]  # the store reads a stored row that does not construct
+    result = _recorder(ports_, store).execute(audit)
+    assert (result.outcome, result.attempt_recorded, result.writes) == (outcome, None, 1)
+    assert store.dispositions == {} and store.attempts == {}
+
+
+def test_w1_18_other_disposition_outcomes_keep_their_recording_state() -> None:
+    ports_, audit = ei4c._proposed()
+    rollback = _Store()
+    rollback.script = ["rollback"]
+    result = _recorder(ports_, rollback).execute(audit)
+    assert (result.outcome, result.attempt_recorded) == (_O.NOT_COMMITTED, False)
+    unavailable = _Store()
+    unavailable.script = ["unavailable"]
+    result = _recorder(ports_, unavailable).execute(audit)
+    assert (result.outcome, result.attempt_recorded) == (_O.PERSISTENCE_UNAVAILABLE, False)
+    store = _Store()
+    _recorder(ports_, store).execute(audit)
+    result = _recorder(ports_, store).execute(ports_.run())
+    assert (result.outcome, result.attempt_recorded) == (_O.EQUIVALENT_COMMITTED, True)
+    lost = _Store()
+    lost.script = ["lost_after"]
+    result = _recorder(ports_, lost).execute(audit)
+    assert (result.outcome, result.attempt_recorded, result.reconciled) == (
+        _O.EQUIVALENT_COMMITTED,
+        True,
+        True,
+    )
+    unknown = _Store()
+    unknown.script = ["lost_after"]
+    unknown.load_failure = "undecodable"
+    result = _recorder(ports_, unknown).execute(audit)
+    assert (result.outcome, result.attempt_recorded) == (_O.COMMIT_RECONCILIATION_UNRESOLVED, None)
+    conflict = _Store()
+    _recorder(ports_, conflict).execute(_unresolved(ports_))
+    result = _recorder(ports_, conflict).execute(audit)
+    assert (result.outcome, result.attempt_recorded) == (_O.CONTENT_CONFLICT, True)
+
+
+def test_w1_13_a_definite_rollback_stays_distinct_from_an_uncertain_commit() -> None:
+    ports_, audit, _ = _attempt_only()
+    outcomes = {}
+    for mode in ("rollback", "unavailable", "lost_before"):
+        store = _Store()
+        store.script = [mode] * 3
+        result = _recorder(ports_, store).execute(audit)
+        outcomes[mode] = (result.outcome, result.attempt_recorded, result.reconciled)
+    assert outcomes == {
+        "rollback": (_O.NOT_COMMITTED, False, False),
+        "unavailable": (_O.PERSISTENCE_UNAVAILABLE, False, False),
+        "lost_before": (_O.RETRY_LIMIT_REACHED, False, True),
+    }
+
+
+def test_w1_14_attempt_only_retries_stay_bounded() -> None:
+    ports_, audit, _ = _attempt_only()
+    store = _Store()
+    store.script = ["lost_before"] * 5
+    result = _recorder(ports_, store, max_writes=3).execute(audit)
+    assert (result.outcome, result.writes, store.writes) == (_O.RETRY_LIMIT_REACHED, 3, 3)
+    assert store.attempts == {}
+
+
+class _Defective(_Store):
+    """Test-only: a store with a programming defect, not a typed storage failure."""
+
+    def __init__(self, where: str) -> None:
+        super().__init__()
+        self.where = where
+
+    def record_attempt(self, attempt: Attempt) -> EquityRecommendationStoreWrite:
+        if self.where == "write":
+            raise TypeError("test: a defect in the store")
+        return super().record_attempt(attempt)
+
+    def load_attempt(self, attempt_identity: str) -> Attempt | None:
+        if self.where == "reload":
+            raise AttributeError("test: a defect in the store")
+        return super().load_attempt(attempt_identity)
+
+
+@pytest.mark.parametrize(("where", "error"), [("write", TypeError), ("reload", AttributeError)])
+def test_w1_15_unexpected_errors_are_never_swallowed(where, error) -> None:  # type: ignore[no-untyped-def]
+    ports_, audit, _ = _attempt_only()
+    store = _Defective(where)
+    store.script = ["lost_after"]
+    with pytest.raises(error, match="a defect in the store"):
+        _recorder(ports_, store).execute(audit)
