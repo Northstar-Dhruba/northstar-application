@@ -218,6 +218,24 @@ from northstar_application.application_services.equity_intraday_evidence_workflo
     IngestSyntheticEquityCandleEventsUseCase,
     IssueEquityResearchEvidenceUseCase,
 )
+from northstar_application.application_services.equity_recommendation_generation_decoding import (  # noqa: E501
+    EQUITY_RECOMMENDATION_EVALUATOR_VERSION,
+    SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS,
+    EquityDecodedAssessment,
+    IncompatibleEquityRecommendationRecordError,
+    InvalidEquityRecommendationRecordError,
+    decode_equity_core_outcome,
+    decode_equity_policy_set,
+    decode_equity_policy_set_reference,
+    decode_equity_recommendation_assessment,
+    decode_equity_recommendation_inputs,
+    decode_equity_research_configuration,
+    decode_equity_trade_recommendation_proposal,
+    decode_equity_trade_recommendation_request,
+    decode_structured_checks,
+    require_supported_equity_recommendation_evaluator,
+    verified_equity_recommendation_document,
+)
 from northstar_application.application_services.equity_recommendation_generation_evidence import (  # noqa: E501
     EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT,
     EQUITY_RECOMMENDATION_ATTEMPT_FORMAT,
@@ -247,7 +265,6 @@ from northstar_application.application_services.equity_recommendation_generation
     EquityRecommendationDispositionKind,
     EquityRecommendationGenerationAttempt,
     EquityRecommendationGenerationDisposition,
-    InvalidEquityRecommendationRecordError,
     equity_recommendation_attempt,
     equity_recommendation_disposition,
     equity_recommendation_disposition_kind,
@@ -397,8 +414,11 @@ from northstar_application.application_services.futures_recommendation_session_w
     FuturesRecommendationWindowResolutionError,
 )
 from northstar_application.application_services.generate_equity_trade_recommendation import (  # noqa: E501
+    EquityAuthoritativeCandidate,
+    EquityCandidateRefusal,
     GenerateEquityTradeRecommendationUseCase,
     assess_equity_recommendation_inputs,
+    establish_equity_recommendation_candidate,
 )
 from northstar_application.application_services.generate_futures_trade_recommendations import (
     FuturesResearchHistoryCoverage,
@@ -458,6 +478,12 @@ from northstar_application.application_services.monitor_futures_trade_recommenda
     MonitorFuturesTradeRecommendationsUseCase,
 )
 from northstar_application.application_services.paper_trading_run import PaperTradingRun
+from northstar_application.application_services.record_equity_recommendation_generation import (  # noqa: E501
+    EQUITY_RECOMMENDATION_RECORD_WRITES,
+    EquityRecommendationRecordingOutcome,
+    EquityRecommendationRecordingResult,
+    RecordEquityRecommendationGenerationUseCase,
+)
 from northstar_application.application_services.record_forward_research_decision import (
     ForwardResearchContractViolationError,
     ForwardResearchRecord,
@@ -530,6 +556,14 @@ from northstar_application.application_services.value_futures_paper_portfolio im
     FuturesContractEconomicsNotFoundError,
     FuturesContractUnrealizedPnl,
     ValueFuturesPaperPortfolioUseCase,
+)
+from northstar_application.application_services.verify_equity_recommendation_generation import (  # noqa: E501
+    EquityRecommendationGenerationVerifier,
+    EquityRecommendationReplayMismatchError,
+    EquityRecommendationSourceUnavailableError,
+    EquityRecommendationSourceVerificationError,
+    EquityVerifiedRecommendationGeneration,
+    VerifyStoredEquityRecommendationGenerationUseCase,
 )
 
 __all__ = [
@@ -633,6 +667,34 @@ __all__ = [
     "equity_core_outcome_document",
     "GenerateEquityTradeRecommendationUseCase",
     "assess_equity_recommendation_inputs",
+    "EquityAuthoritativeCandidate",
+    "EquityCandidateRefusal",
+    "establish_equity_recommendation_candidate",
+    "EQUITY_RECOMMENDATION_EVALUATOR_VERSION",
+    "SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS",
+    "EquityDecodedAssessment",
+    "IncompatibleEquityRecommendationRecordError",
+    "decode_equity_core_outcome",
+    "decode_equity_policy_set",
+    "decode_equity_policy_set_reference",
+    "decode_equity_recommendation_assessment",
+    "decode_equity_recommendation_inputs",
+    "decode_equity_research_configuration",
+    "decode_equity_trade_recommendation_proposal",
+    "decode_equity_trade_recommendation_request",
+    "decode_structured_checks",
+    "require_supported_equity_recommendation_evaluator",
+    "verified_equity_recommendation_document",
+    "EquityRecommendationGenerationVerifier",
+    "EquityRecommendationReplayMismatchError",
+    "EquityRecommendationSourceUnavailableError",
+    "EquityRecommendationSourceVerificationError",
+    "EquityVerifiedRecommendationGeneration",
+    "VerifyStoredEquityRecommendationGenerationUseCase",
+    "EQUITY_RECOMMENDATION_RECORD_WRITES",
+    "EquityRecommendationRecordingOutcome",
+    "EquityRecommendationRecordingResult",
+    "RecordEquityRecommendationGenerationUseCase",
     "EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT",
     "EQUITY_RECOMMENDATION_ATTEMPT_FORMAT",
     "EQUITY_RECOMMENDATION_CORE_OUTCOME_FORMAT",

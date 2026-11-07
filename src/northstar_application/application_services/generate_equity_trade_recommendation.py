@@ -291,7 +291,7 @@ class GenerateEquityTradeRecommendationUseCase:
         """Evaluate ``request`` and return its eligibility audit, with a proposal when PROPOSED."""
         if not isinstance(request, EquityTradeRecommendationRequest):
             raise TypeError("request must be an EquityTradeRecommendationRequest.")
-        candidate = self._candidate(request)
+        candidate = _establish(request, self._timelines, self._snapshots)
         if isinstance(candidate, _Failed):
             return _audit(
                 request,
@@ -321,122 +321,6 @@ class GenerateEquityTradeRecommendationUseCase:
     # ------------------------------------------------------------------
     # 1. Authoritative candidate
     # ------------------------------------------------------------------
-
-    def _candidate(self, request: EquityTradeRecommendationRequest) -> _Candidate | _Failed:
-        identity = EquityIntradayResearchTimelineIdentity(
-            request.listing, request.trading_date, request.configuration
-        )
-        try:
-            stored = self._timelines.load(identity.strategy, request.listing, request.trading_date)
-        except EquityIntradayResearchTimelineUnavailableError as exc:
-            return _failed(_R.RESEARCH_TIMELINE_UNAVAILABLE, f"The timeline store failed: {exc}")
-        if stored is None:
-            return _failed(
-                _R.NO_AUTHORITATIVE_CANDIDATE,
-                "No research timeline entry was ever committed for this strategy, listing and "
-                "date (EI3-D11).",
-            )
-        try:
-            timeline = rehydrate_equity_intraday_research_timeline(
-                identity, stored, self._snapshots
-            )
-        except EquityIntradayResearchTimelineConfigurationConflictError as exc:
-            return _failed(_R.RESEARCH_CONFIGURATION_MISMATCH, str(exc))
-        except EquityIntradayResearchDecisionNotReproducedError as exc:
-            return _failed(_R.RESEARCH_DECISION_NOT_REPRODUCED, str(exc))
-        except EquityIntradayResearchHistoricalEvaluationUnavailableError as exc:
-            return _failed(_R.HISTORICAL_EVALUATION_UNAVAILABLE, str(exc))
-        except InvalidStoredEquityIntradayResearchTimelineError as exc:
-            return _failed(_R.RESEARCH_TIMELINE_INVALID, str(exc))
-        except EquityCandleEvidenceUnavailableError as exc:
-            return _failed(_R.EVIDENCE_SNAPSHOT_UNAVAILABLE, f"The snapshot store failed: {exc}")
-        entry = timeline.candidate
-        if entry is None:
-            return _failed(
-                _R.NO_AUTHORITATIVE_CANDIDATE,
-                f"The verified timeline of {len(timeline.entries)} entries holds no CANDIDATE.",
-            )
-        head = timeline.head_fingerprint
-        assert head is not None
-
-        def invalid(detail: str) -> _Failed:
-            return _failed(
-                _R.CANDIDATE_EVIDENCE_INVALID, f"CANDIDATE entry {entry.sequence}: {detail}"
-            )
-
-        decision, values = entry.decision, entry.decision.values
-        evidence = decision.evidence
-        if (
-            evidence is None
-            or values is None
-            or values.signal_close is None
-            or values.opening_range_low is None
-            or values.signal_interval_end is None
-        ):
-            return invalid("the decision lacks its signal close, opening-range low or signal bar.")
-        if evidence.evidence_class is not EquityCandleEvidenceClass.SYNTHETIC:
-            return _failed(
-                _R.CANDIDATE_EVIDENCE_NOT_SYNTHETIC, "EI-4C generates from synthetic evidence only."
-            )
-        try:
-            snapshot = self._snapshots.get_snapshot(evidence.snapshot_id)
-        except EquityCandleEvidenceUnavailableError as exc:
-            return _failed(_R.EVIDENCE_SNAPSHOT_UNAVAILABLE, f"The snapshot store failed: {exc}")
-        if snapshot is None:
-            return invalid(f"its source snapshot {evidence.snapshot_id} is unavailable.")
-        if (
-            snapshot.snapshot_id,
-            snapshot.manifest_fingerprint,
-            snapshot.as_of,
-            snapshot.listing,
-            snapshot.trading_date,
-            snapshot.evidence_class,
-            snapshot.window_policy_version,
-        ) != (
-            evidence.snapshot_id,
-            evidence.manifest_fingerprint,
-            evidence.as_of,
-            request.listing,
-            request.trading_date,
-            evidence.evidence_class,
-            evidence.window_policy_version,
-        ):
-            return invalid(f"it does not match its source snapshot {evidence.snapshot_id}.")
-        required = evidence.required_interval_ends
-        if not required or required[-1] != values.signal_interval_end:
-            return invalid("its signal bar is not the latest interval its decision required.")
-        try:
-            provenance = EquityRecommendationCandidateProvenance(
-                source=EquityResearchCandidateReference(
-                    strategy=request.configuration.strategy,
-                    research_configuration_version=EquitySyntheticVersion(
-                        timeline.configuration.version
-                    ),
-                    listing=request.listing,
-                    trading_date=request.trading_date,
-                    decision_as_of=evidence.as_of,
-                    research_decision_fingerprint=decision.fingerprint,
-                    candidate_entry_fingerprint=entry.fingerprint,
-                    evidence_snapshot_id=evidence.snapshot_id,
-                ),
-                manifest_fingerprint=evidence.manifest_fingerprint,
-                candidate_sequence=entry.sequence,
-                signal_interval_end=values.signal_interval_end,
-                signal_close=Price(values.signal_close, snapshot.currency),
-                opening_range_low=Price(values.opening_range_low, snapshot.currency),
-                research_window_policy_version=snapshot.window_policy_version,
-                research_window_opens_at=snapshot.window_opens_at,
-                research_window_closes_at=snapshot.window_closes_at,
-                venue_reference=snapshot.venue_reference,
-                venue_provenance=snapshot.venue_provenance,
-            )
-        except (ValidationError, InvalidEquityRecommendationEvidenceError) as exc:
-            return invalid(f"its research evidence cannot be referenced: {exc}")
-        grid = tuple(interval.opens_at for interval in snapshot.intervals)
-        ends = tuple(interval.closes_at for interval in snapshot.intervals)
-        if grid != provenance.entry_bar_openings() or frozenset(ends) != provenance.bar_ends():
-            return invalid("its snapshot's grid is not the research window's five-minute grid.")
-        return _Candidate(provenance, head)
 
     # ------------------------------------------------------------------
     # 2. Synthetic references, frozen
@@ -655,6 +539,169 @@ class GenerateEquityTradeRecommendationUseCase:
             )
             return None
         return EquityIssuedHistoryEvidence.as_of_view(history, as_of)
+
+
+# ---------------------------------------------------------------------------
+# The authoritative candidate, as generation and verification establish it
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class EquityAuthoritativeCandidate:
+    """The verified first CANDIDATE, frozen, and the timeline head seen while loading.
+
+    ``observed_timeline_head`` is diagnostics only: it is never part of the
+    candidate evidence, so a later timeline entry never changes it.
+    """
+
+    provenance: EquityRecommendationCandidateProvenance
+    observed_timeline_head: str
+
+
+@dataclass(frozen=True, slots=True)
+class EquityCandidateRefusal:
+    """Why no authoritative candidate could be established, with its stable reason."""
+
+    reason: EquityRecommendationEligibilityReason
+    detail: str
+
+
+def establish_equity_recommendation_candidate(
+    request: EquityTradeRecommendationRequest,
+    timelines: EquityIntradayResearchTimelineStore,
+    snapshots: EquityCandleEvidenceSnapshotStore,
+) -> EquityAuthoritativeCandidate | EquityCandidateRefusal:
+    """Establish the authoritative first CANDIDATE for ``request`` from EI-3C and EI-2B.
+
+    It loads the committed timeline, rehydrates it through the EI-3C path
+    (EI3-D13), takes its single CANDIDATE and re-checks that candidate's own
+    EI-2B snapshot, exactly as generation does. An uncommitted or in-memory
+    timeline is never consulted, and no later entry replaces the candidate.
+    """
+    if not isinstance(request, EquityTradeRecommendationRequest):
+        raise TypeError("request must be an EquityTradeRecommendationRequest.")
+    found = _establish(request, timelines, snapshots)
+    if isinstance(found, _Failed):
+        (reason,) = found.reasons
+        return EquityCandidateRefusal(reason, found.detail)
+    return EquityAuthoritativeCandidate(found.provenance, found.timeline_head)
+
+
+def _establish(
+    request: EquityTradeRecommendationRequest,
+    timelines: EquityIntradayResearchTimelineStore,
+    snapshots: EquityCandleEvidenceSnapshotStore,
+) -> _Candidate | _Failed:
+    identity = EquityIntradayResearchTimelineIdentity(
+        request.listing, request.trading_date, request.configuration
+    )
+    try:
+        stored = timelines.load(identity.strategy, request.listing, request.trading_date)
+    except EquityIntradayResearchTimelineUnavailableError as exc:
+        return _failed(_R.RESEARCH_TIMELINE_UNAVAILABLE, f"The timeline store failed: {exc}")
+    if stored is None:
+        return _failed(
+            _R.NO_AUTHORITATIVE_CANDIDATE,
+            "No research timeline entry was ever committed for this strategy, listing and "
+            "date (EI3-D11).",
+        )
+    try:
+        timeline = rehydrate_equity_intraday_research_timeline(identity, stored, snapshots)
+    except EquityIntradayResearchTimelineConfigurationConflictError as exc:
+        return _failed(_R.RESEARCH_CONFIGURATION_MISMATCH, str(exc))
+    except EquityIntradayResearchDecisionNotReproducedError as exc:
+        return _failed(_R.RESEARCH_DECISION_NOT_REPRODUCED, str(exc))
+    except EquityIntradayResearchHistoricalEvaluationUnavailableError as exc:
+        return _failed(_R.HISTORICAL_EVALUATION_UNAVAILABLE, str(exc))
+    except InvalidStoredEquityIntradayResearchTimelineError as exc:
+        return _failed(_R.RESEARCH_TIMELINE_INVALID, str(exc))
+    except EquityCandleEvidenceUnavailableError as exc:
+        return _failed(_R.EVIDENCE_SNAPSHOT_UNAVAILABLE, f"The snapshot store failed: {exc}")
+    entry = timeline.candidate
+    if entry is None:
+        return _failed(
+            _R.NO_AUTHORITATIVE_CANDIDATE,
+            f"The verified timeline of {len(timeline.entries)} entries holds no CANDIDATE.",
+        )
+    head = timeline.head_fingerprint
+    assert head is not None
+
+    def invalid(detail: str) -> _Failed:
+        return _failed(_R.CANDIDATE_EVIDENCE_INVALID, f"CANDIDATE entry {entry.sequence}: {detail}")
+
+    decision, values = entry.decision, entry.decision.values
+    evidence = decision.evidence
+    if (
+        evidence is None
+        or values is None
+        or values.signal_close is None
+        or values.opening_range_low is None
+        or values.signal_interval_end is None
+    ):
+        return invalid("the decision lacks its signal close, opening-range low or signal bar.")
+    if evidence.evidence_class is not EquityCandleEvidenceClass.SYNTHETIC:
+        return _failed(
+            _R.CANDIDATE_EVIDENCE_NOT_SYNTHETIC, "EI-4C generates from synthetic evidence only."
+        )
+    try:
+        snapshot = snapshots.get_snapshot(evidence.snapshot_id)
+    except EquityCandleEvidenceUnavailableError as exc:
+        return _failed(_R.EVIDENCE_SNAPSHOT_UNAVAILABLE, f"The snapshot store failed: {exc}")
+    if snapshot is None:
+        return invalid(f"its source snapshot {evidence.snapshot_id} is unavailable.")
+    if (
+        snapshot.snapshot_id,
+        snapshot.manifest_fingerprint,
+        snapshot.as_of,
+        snapshot.listing,
+        snapshot.trading_date,
+        snapshot.evidence_class,
+        snapshot.window_policy_version,
+    ) != (
+        evidence.snapshot_id,
+        evidence.manifest_fingerprint,
+        evidence.as_of,
+        request.listing,
+        request.trading_date,
+        evidence.evidence_class,
+        evidence.window_policy_version,
+    ):
+        return invalid(f"it does not match its source snapshot {evidence.snapshot_id}.")
+    required = evidence.required_interval_ends
+    if not required or required[-1] != values.signal_interval_end:
+        return invalid("its signal bar is not the latest interval its decision required.")
+    try:
+        provenance = EquityRecommendationCandidateProvenance(
+            source=EquityResearchCandidateReference(
+                strategy=request.configuration.strategy,
+                research_configuration_version=EquitySyntheticVersion(
+                    timeline.configuration.version
+                ),
+                listing=request.listing,
+                trading_date=request.trading_date,
+                decision_as_of=evidence.as_of,
+                research_decision_fingerprint=decision.fingerprint,
+                candidate_entry_fingerprint=entry.fingerprint,
+                evidence_snapshot_id=evidence.snapshot_id,
+            ),
+            manifest_fingerprint=evidence.manifest_fingerprint,
+            candidate_sequence=entry.sequence,
+            signal_interval_end=values.signal_interval_end,
+            signal_close=Price(values.signal_close, snapshot.currency),
+            opening_range_low=Price(values.opening_range_low, snapshot.currency),
+            research_window_policy_version=snapshot.window_policy_version,
+            research_window_opens_at=snapshot.window_opens_at,
+            research_window_closes_at=snapshot.window_closes_at,
+            venue_reference=snapshot.venue_reference,
+            venue_provenance=snapshot.venue_provenance,
+        )
+    except (ValidationError, InvalidEquityRecommendationEvidenceError) as exc:
+        return invalid(f"its research evidence cannot be referenced: {exc}")
+    grid = tuple(interval.opens_at for interval in snapshot.intervals)
+    ends = tuple(interval.closes_at for interval in snapshot.intervals)
+    if grid != provenance.entry_bar_openings() or frozenset(ends) != provenance.bar_ends():
+        return invalid("its snapshot's grid is not the research window's five-minute grid.")
+    return _Candidate(provenance, head)
 
 
 # ---------------------------------------------------------------------------
