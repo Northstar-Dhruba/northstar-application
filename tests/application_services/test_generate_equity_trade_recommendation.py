@@ -55,6 +55,8 @@ from northstar_core.strategy import StrategyIdentity
 
 from northstar_application import application_services, ports
 from northstar_application.application_services import (
+    EQUITY_RECOMMENDATION_GENERATION_KEY_NAMESPACE,
+    EQUITY_RECOMMENDATION_GENERATION_KEY_PREFIX,
     EQUITY_TRADE_RECOMMENDATION_PROPOSAL_NAMESPACE,
     NSE_EQUITY_INTRADAY_V1_RESEARCH_WINDOW,
     AdvanceEquityIntradayResearchTimelineUseCase,
@@ -72,29 +74,53 @@ from northstar_application.application_services import (
     EquityCandleObservationRecord,
     EquityIntradayResearchTimelineAdvanceStatus,
     EquityIntradayResearchTimelineRole,
+    EquityIssuedHistoryEvidence,
     EquityModeledEntryWindow,
     EquityOpeningRangeBreakoutConfiguration,
     EquityRecommendationCheck,
     EquityRecommendationCheckStatus,
+    EquityRecommendationDispositionKind,
     EquityRecommendationEligibilityAudit,
     EquityRecommendationEligibilityReason,
+    EquityRecommendationGenerationAttempt,
+    EquityRecommendationGenerationDisposition,
     EquityRecommendationGenerationStatus,
     EquityResearchWindowEvaluation,
+    EquityResolvedSyntheticPolicySet,
+    EquitySyntheticPolicySetReference,
     EquityTradeRecommendationRequest,
+    EquityVenueDayEvidence,
     EvaluateEquityResearchWindowUseCase,
     GenerateEquityTradeRecommendationUseCase,
+    InvalidEquityRecommendationDocumentError,
     InvalidEquityRecommendationEligibilityError,
+    InvalidEquityRecommendationEvidenceError,
+    InvalidEquityRecommendationRecordError,
     InvalidEquityTradeRecommendationRequestError,
     IssueEquityCandleEvidenceSnapshotUseCase,
     StoredEquityIntradayResearchTimeline,
+    assess_equity_recommendation_inputs,
     canonical_equity_candle_json,
+    canonical_equity_recommendation_json,
     equity_candle_identity_conflicts,
     equity_candle_in_window,
     equity_candle_retry,
     equity_candle_snapshot_from_document,
     equity_candle_snapshot_json,
+    equity_modeled_issuance,
+    equity_recommendation_attempt,
+    equity_recommendation_disposition,
+    equity_recommendation_fingerprint,
+    equity_recommendation_generation_key,
     equity_recommendation_status,
     equity_trade_recommendation_proposal_key,
+    verify_equity_recommendation_document,
+)
+from northstar_application.application_services import (
+    equity_recommendation_generation_evidence as evidence_module,
+)
+from northstar_application.application_services import (
+    equity_recommendation_generation_records as records_module,
 )
 from northstar_application.application_services import (
     equity_trade_recommendation_eligibility as eligibility_module,
@@ -425,6 +451,7 @@ def _timing_policy(
     entry: time = time(10, 45),
     exit_: time = time(14, 0),
     remaining: int = 60,
+    latency: timedelta = timedelta(0),
 ) -> EquitySyntheticEntryTimingPolicy:
     return EquitySyntheticEntryTimingPolicy(
         version=_v(version),
@@ -434,6 +461,7 @@ def _timing_policy(
         latest_entry_bar_opening=entry,
         modeled_exit_boundary=exit_,
         minimum_remaining_session=timedelta(minutes=remaining),
+        modeled_issuance_latency=latency,
     )
 
 
@@ -571,9 +599,17 @@ class _Eligibility(EquitySyntheticListingEligibilitySource):
         return answer if answer is not None and version.value.endswith("/wrong") else None
 
 
-def _prior(listing: ListingReference, key: str = "prior-1") -> EquityPriorSessionRecommendation:
+def _prior(
+    listing: ListingReference, key: str = "prior-1", sequence: int = 1
+) -> EquityPriorSessionRecommendation:
     return EquityPriorSessionRecommendation(
-        key, StrategyIdentity("ei4c-other"), listing, _DAY, EquityIssuanceKind.MODELED, _at(9, 20)
+        key,
+        StrategyIdentity("ei4c-other"),
+        listing,
+        _DAY,
+        EquityIssuanceKind.MODELED,
+        _at(9, 20),
+        sequence,
     )
 
 
@@ -581,10 +617,19 @@ def _history(
     *records: EquityPriorSessionRecommendation,
     through: PointInTime | None = None,
     day: date = _DAY,
+    watermark: int | None = None,
+    reference: str = "test-history/1",
 ) -> EquitySessionRecommendationHistory:
-    """An authoritative session record, complete through 15:30 IST unless stated."""
+    """A labelled synthetic test record, complete through 15:30 IST unless stated.
+
+    It is a test fixture establishing a complete history, never production
+    authority. Its recording watermark is the highest recording sequence it
+    lists unless stated.
+    """
+    if watermark is None:
+        watermark = max((r.recording_sequence for r in records), default=0)
     return EquitySessionRecommendationHistory(
-        _NSE, day, records, through or _at(15, 30), "test-history/1"
+        _NSE, day, records, through or _at(15, 30), watermark, reference
     )
 
 
@@ -626,18 +671,37 @@ class _Ports:
         return self.use_case().execute(_request(**changes))
 
 
-def _request(**changes: Any) -> EquityTradeRecommendationRequest:
-    values: dict[str, Any] = {
-        "configuration": _CONFIG,
-        "listing": _LISTING,
-        "trading_date": _DAY,
+_POLICY_FIELDS = (
+    "generation_policy_version",
+    "risk_policy_version",
+    "cost_schedule_version",
+    "price_increment_version",
+    "timing_policy_version",
+)
+
+
+def _policy_set(set_version: str = "set/1", **versions: Any) -> EquitySyntheticPolicySetReference:
+    components = {
         "generation_policy_version": _v("generation/1"),
         "risk_policy_version": _v("risk/1"),
         "cost_schedule_version": _v("costs/1"),
         "price_increment_version": _v("increment/1"),
         "timing_policy_version": _v("timing/1"),
+    }
+    components.update(versions)
+    return EquitySyntheticPolicySetReference(_v(set_version), **components)
+
+
+def _request(**changes: Any) -> EquityTradeRecommendationRequest:
+    """Build a request; component version keywords build its policy set."""
+    components = {name: changes.pop(name) for name in _POLICY_FIELDS if name in changes}
+    set_version = changes.pop("policy_set_version", "set/1")
+    values: dict[str, Any] = {
+        "configuration": _CONFIG,
+        "listing": _LISTING,
+        "trading_date": _DAY,
+        "policy_set": _policy_set(set_version, **components),
         "listing_eligibility_version": _v("eligibility/1"),
-        "modeled_issued_at": _at(9, 36),
     }
     values.update(changes)
     return EquityTradeRecommendationRequest(**values)
@@ -685,7 +749,9 @@ def test_a_the_first_authoritative_candidate_generates_the_proposal() -> None:
     assert audit.candidate is not None
     assert audit.candidate.candidate_sequence == 2
     assert audit.candidate.manifest_fingerprint == candidate.manifest_fingerprint
-    assert audit.candidate.timeline_head_fingerprint == timeline.head_fingerprint
+    # The head seen while loading is diagnostics only (EI4-D9-C).
+    assert audit.observed_timeline_head == timeline.head_fingerprint
+    assert "timeline_head" not in json.dumps(audit.assessment_document())
 
 
 def test_b_no_candidate_is_an_explicit_non_generation_result() -> None:
@@ -863,9 +929,15 @@ def test_j_eligibility_starts_at_the_first_grid_bar_opening_at_or_after_issuance
     )
     assert window.latest_entry_bar_opens_at == _at(10, 45)
     assert window.modeled_exit_at == _at(14, 0)
-    assert _window(ports_.run(modeled_issued_at=_at(9, 40))).timing.eligible_from == _at(9, 40)
-    late = _window(ports_.run(modeled_issued_at=_at(9, 40, 1)))
-    assert late.timing.eligible_from == _at(9, 45)
+    # Modeled issuance is the decision plus the policy's latency (EI4-D9-C).
+    ports_.references.hold("timing", _timing_policy("timing/4m", latency=timedelta(minutes=4)))
+    exact = _window(ports_.run(timing_policy_version=_v("timing/4m")))
+    assert (exact.timing.issued_at, exact.timing.eligible_from) == (_at(9, 40), _at(9, 40))
+    ports_.references.hold(
+        "timing", _timing_policy("timing/4m1s", latency=timedelta(minutes=4, seconds=1))
+    )
+    late = _window(ports_.run(timing_policy_version=_v("timing/4m1s")))
+    assert (late.timing.issued_at, late.timing.eligible_from) == (_at(9, 40, 1), _at(9, 45))
     assert late.timing.decision_as_of == _at(9, 36)
 
 
@@ -874,18 +946,13 @@ def test_k_positive_finality_latency_never_uses_the_bar_already_open() -> None:
     # 09:35:30. The 09:35-09:40 bar opened before that, so it can never
     # evidence a full-bar entry: eligibility starts at the 09:40 opening.
     ports_ = _ports(_ist(9, 31), _ist(9, 35, 30))
-    audit = ports_.run(modeled_issued_at=_at(9, 35, 30))
+    audit = ports_.run()
     assert audit.status is _S.PROPOSED
     assert audit.candidate is not None
     assert audit.candidate.signal_interval_end == _at(9, 35)
     assert _window(audit).timing.decision_as_of == _at(9, 35, 30)
+    assert _window(audit).timing.issued_at == _at(9, 35, 30)
     assert _window(audit).timing.eligible_from == _at(9, 40)
-
-
-def test_k_a_modeled_issuance_before_the_decision_is_never_backdated() -> None:
-    audit = _ports().run(modeled_issued_at=_at(9, 35, 59))
-    _refused(audit, _S.NOT_ELIGIBLE, _R.MODELED_ISSUANCE_BEFORE_DECISION)
-    assert audit.entry_window is None
 
 
 def test_l_a_signal_after_the_synthetic_cutoff_is_refused() -> None:
@@ -932,7 +999,7 @@ def test_m_a_post_window_historical_decision_is_never_actionable() -> None:
     (entry,) = world.timelines.only().entries
     assert entry.role is _ROLE.CANDIDATE
     ports_ = _Ports(world)
-    audit = ports_.run(modeled_issued_at=_at(15, 10))
+    audit = ports_.run()
     _refused(
         audit,
         _S.NOT_ELIGIBLE,
@@ -1104,9 +1171,10 @@ def test_r_core_rejections_are_propagated_exactly() -> None:
         "INSUFFICIENT_RISK_BUDGET",
         "INSUFFICIENT_EXPOSURE_BUDGET",
     )
-    document = json.loads(audit.canonical_json())
-    assert document["core_outcome"]["kind"] == "REJECTION"
-    assert document["core_outcome"]["reasons"] == list(audit.core_reasons)
+    core = json.loads(audit.canonical_json())["assessment"]["core_outcome"]
+    assert core["format"] == "northstar.equity-recommendation-core-outcome/1"
+    assert core["kind"] == "REJECTION"
+    assert core["outcome"]["reasons"] == list(audit.core_reasons)
 
 
 def test_s_core_costs_and_sizing_are_preserved_exactly() -> None:
@@ -1235,9 +1303,10 @@ def _issued(
     listing: ListingReference,
     at: PointInTime,
     kind: EquityIssuanceKind = EquityIssuanceKind.MODELED,
+    sequence: int = 1,
 ) -> EquityPriorSessionRecommendation:
     return EquityPriorSessionRecommendation(
-        key, StrategyIdentity("ei4c-other"), listing, _DAY, kind, at
+        key, StrategyIdentity("ei4c-other"), listing, _DAY, kind, at, sequence
     )
 
 
@@ -1253,7 +1322,9 @@ def test_u_a_recommendation_issued_before_the_modeled_instant_is_open(kind) -> N
     assert "prior-1" in detail and "not a breach" in detail
     assert ports_.state.asked == [_at(9, 36)]
     assert audit.inputs is not None
-    assert [r.recommendation_key for r in audit.inputs.open_recommendations] == ["prior-1"]
+    frozen = audit.inputs.issued_history
+    assert [r.recommendation_key for r in frozen.recommendations] == ["prior-1"]
+    assert (frozen.as_of, frozen.recording_watermark) == (_at(9, 36), 1)
 
 
 def test_u_an_open_recommendation_on_another_listing_leaves_exposure_unresolved() -> None:
@@ -1271,15 +1342,17 @@ def test_u_a_later_issuance_never_changes_an_earlier_assessment() -> None:
     ports_ = _ports()
     before = ports_.run()
     ports_.state.answer = _history(
-        _issued("later-same", _LISTING, _at(10, 0)), _issued("later-other", _OTHER, _at(10, 5))
+        _issued("later-same", _LISTING, _at(10, 0), sequence=1),
+        _issued("later-other", _OTHER, _at(10, 5), sequence=2),
     )
     after = ports_.run()
     assert after.status is _S.PROPOSED
     assert after.proposal == before.proposal
-    assert after.inputs is not None and after.inputs.open_recommendations == ()
-    assert "2 issued later do not affect" in _check(after, _C.OPEN_RECOMMENDATIONS).detail
-    # Evaluated as of 10:00 instead, the same record makes the 10:00 issuance open.
-    late = ports_.run(modeled_issued_at=_at(10, 0))
+    assert after.inputs is not None and after.inputs.issued_history.recommendations == ()
+    assert "lists no recommendation issued by" in _check(after, _C.OPEN_RECOMMENDATIONS).detail
+    # Under a policy whose latency models issuance at 10:00, the 10:00 issuance is open.
+    ports_.references.hold("timing", _timing_policy("timing/24m", latency=timedelta(minutes=24)))
+    late = ports_.run(timing_policy_version=_v("timing/24m"))
     _refused(late, _S.EVALUATION_UNRESOLVED, _R.EXCLUSIVITY_POLICY_UNRESOLVED)
 
 
@@ -1292,7 +1365,14 @@ def test_u_a_transient_proposal_is_never_an_issued_recommendation() -> None:
     assert ports_.state.answer == _history()
     assert ports_.run() == first
     with pytest.raises(InvalidEquityRecommendationReferenceError):
-        _history(first.proposal)  # type: ignore[arg-type]
+        EquitySessionRecommendationHistory(
+            _NSE,
+            _DAY,
+            (first.proposal,),
+            _at(15, 30),
+            0,
+            "test-history/1",  # type: ignore[arg-type]
+        )
 
 
 def test_v_an_established_empty_record_is_empty_but_none_is_missing() -> None:
@@ -1300,9 +1380,9 @@ def test_v_an_established_empty_record_is_empty_but_none_is_missing() -> None:
     audit = ports_.run()
     assert audit.status is _S.PROPOSED
     assert audit.inputs is not None
-    assert audit.inputs.history_reference == "test-history/1"
-    assert audit.inputs.history_complete_through == _at(15, 30)
-    assert audit.inputs.open_recommendations == ()
+    frozen = audit.inputs.issued_history
+    assert (frozen.reference, frozen.complete_through) == ("test-history/1", _at(15, 30))
+    assert (frozen.recording_watermark, frozen.recommendations) == (0, ())
     ports_.state.answer = None
     missing = ports_.run()
     _refused(missing, _S.DEPENDENCY_UNAVAILABLE, _R.OPEN_RECOMMENDATION_STATE_UNAVAILABLE)
@@ -1333,13 +1413,27 @@ def test_w_malformed_or_contradictory_records_cannot_be_constructed() -> None:
     with pytest.raises(InvalidEquityRecommendationReferenceError, match="distinct"):
         _history(_issued("x", _LISTING, _at(9, 20)), _issued("x", _OTHER, _at(9, 21)))
     with pytest.raises(InvalidEquityRecommendationReferenceError, match="order"):
-        _history(_issued("b", _LISTING, _at(9, 21)), _issued("a", _OTHER, _at(9, 20)))
+        _history(
+            _issued("b", _LISTING, _at(9, 21), sequence=1),
+            _issued("a", _OTHER, _at(9, 20), sequence=2),
+        )
     with pytest.raises(InvalidEquityRecommendationReferenceError, match="not complete"):
         _history(through=_at(9, 30)).issued_by(_at(9, 36))
+    # Recording provenance (EI4-D9-H): sequences are distinct and within the watermark.
+    with pytest.raises(InvalidEquityRecommendationReferenceError, match="recording watermark"):
+        _history(_issued("x", _LISTING, _at(9, 20), sequence=3), watermark=2)
+    with pytest.raises(InvalidEquityRecommendationReferenceError, match="recording sequences"):
+        _history(_issued("x", _LISTING, _at(9, 20)), _issued("y", _OTHER, _at(9, 21)))
+    for watermark in (-1, True, "1"):
+        with pytest.raises(InvalidEquityRecommendationReferenceError, match="watermark"):
+            _history(watermark=watermark)  # type: ignore[arg-type]
+    with pytest.raises(InvalidEquityRecommendationReferenceError, match="recording_sequence"):
+        _issued("x", _LISTING, _at(9, 20), sequence=0)
 
 
 def test_w_records_at_one_instant_have_one_deterministic_order() -> None:
-    a, b = _issued("a-key", _OTHER, _at(9, 36)), _issued("b-key", _LISTING, _at(9, 36))
+    a = _issued("a-key", _OTHER, _at(9, 36), sequence=2)
+    b = _issued("b-key", _LISTING, _at(9, 36), sequence=1)
     with pytest.raises(InvalidEquityRecommendationReferenceError, match="order"):
         _history(b, a)
     record = _history(a, b)
@@ -1355,7 +1449,7 @@ def test_w_records_at_one_instant_have_one_deterministic_order() -> None:
         _R.EXCLUSIVITY_POLICY_UNRESOLVED,
         _R.EXPOSURE_POLICY_UNRESOLVED,
     )
-    assert audit.inputs is not None and audit.inputs.open_recommendations == (a, b)
+    assert audit.inputs is not None and audit.inputs.issued_history.recommendations == (a, b)
     # Repeated evaluation gives the same canonical result.
     assert ports_.run().canonical_json() == audit.canonical_json()
 
@@ -1407,91 +1501,81 @@ def test_x_the_daily_loss_limit_and_other_missing_controls_are_never_satisfied()
 # ----------------------------------------------------------------------
 
 
-def _expected_key(*parts: str) -> str:
-    encoded = b"".join(
-        str(len(p.encode())).encode() + b":" + p.encode()
-        for p in (EQUITY_TRADE_RECOMMENDATION_PROPOSAL_NAMESPACE, *parts)
-    )
+def _length_prefixed_sha256(*parts: str) -> str:
+    encoded = b"".join(str(len(p.encode())).encode() + b":" + p.encode() for p in parts)
     return hashlib.sha256(encoded).hexdigest()
 
 
-def test_y_the_proposal_key_is_deterministic_and_canonical() -> None:
+def test_y_the_generation_key_is_deterministic_and_canonical() -> None:
     ports_ = _ports()
     first, second = ports_.run(), _Ports(ports_.world).run()
-    assert first.proposal is not None and second.proposal is not None
-    key = first.proposal.proposal_key
-    assert key == second.proposal.proposal_key
+    assert first.proposal is not None and second.proposal is not None and first.inputs
+    key = first.proposal.generation_key
+    assert key == second.proposal.generation_key == first.generation_key
     candidate = ports_.world.timelines.only().entries[1]
-    assert key == _expected_key(
+    policy_set = first.inputs.policy_set
+    assert key == EQUITY_RECOMMENDATION_GENERATION_KEY_PREFIX + _length_prefixed_sha256(
+        EQUITY_RECOMMENDATION_GENERATION_KEY_NAMESPACE,
         "ei4c-orb-vwap-volume",
         "synthetic-ei4c-research/1",
         "M&M",
         "NSE",
         "2026-08-12",
         candidate.entry_fingerprint,
-        "synthetic-ei4c-generation/1",
+        "synthetic-ei4c-set/1",
+        policy_set.fingerprint,
     )
-    assert len(key) == 64 and set(key) <= set("0123456789abcdef")
-    # The modeled issuance instant is not part of the key.
-    later = ports_.run(modeled_issued_at=_at(9, 41))
-    assert later.proposal is not None and later.proposal.proposal_key == key
-    with pytest.raises(InvalidEquityRecommendationEligibilityError, match="derived"):
-        dataclasses.replace(first.proposal, proposal_key="0" * 64)
+    assert policy_set.fingerprint.startswith("eirs1-sha256:")
+    with pytest.raises(InvalidEquityRecommendationEligibilityError, match="eirk1"):
+        dataclasses.replace(first.proposal, generation_key="0" * 64)
 
 
-def test_z_generation_policy_versions_have_distinct_keys_other_versions_distinct_content() -> None:
+def test_z_policy_set_components_are_identity_eligibility_and_history_are_content() -> None:
     ports_ = _ports()
     ports_.references.hold("generation", _generation("generation/2"))
     ports_.references.hold("risk", _risk("risk/2", capital="50000"))
-    base = ports_.run().proposal
-    other = ports_.run(generation_policy_version=_v("generation/2")).proposal
-    risk = ports_.run(risk_policy_version=_v("risk/2")).proposal
-    assert base is not None and other is not None and risk is not None
-    assert other.proposal_key != base.proposal_key
-    assert other.definition.levels == base.definition.levels
-    # One key per candidate and generation-policy version (EI4-D2): another
-    # risk version is different content under the same key, which a store
-    # must refuse rather than record twice.
-    assert risk.proposal_key == base.proposal_key
-    assert risk.document() != base.document()
+    base = ports_.run()
+    other = ports_.run(generation_policy_version=_v("generation/2"))
+    risk = ports_.run(risk_policy_version=_v("risk/2"))
+    assert base.proposal and other.proposal and risk.proposal
+    # EI4-D9-B: a different policy-set component is a different identity.
+    assert len({base.generation_key, other.generation_key, risk.generation_key}) == 3
+    assert other.proposal.definition.levels == base.proposal.definition.levels
+    # Eligibility evidence is content: the same key, different content.
+    eligibility = ports_.run(listing_eligibility_version=_v("eligibility/2"))
+    assert eligibility.generation_key == base.generation_key
+    assert eligibility.assessment_fingerprint != base.assessment_fingerprint
+    assert eligibility.proposal is not None
+    assert eligibility.proposal.fingerprint != base.proposal.fingerprint
+    # History evidence is content too: an other-listing record issued later
+    # leaves the as-of view empty but changes what was observed.
+    ports_.state.answer = _history(_issued("later", _OTHER, _at(10, 0)))
+    history = ports_.run()
+    assert history.status is _S.PROPOSED
+    assert history.generation_key == base.generation_key
+    assert history.assessment_fingerprint != base.assessment_fingerprint
+    assert history.proposal == base.proposal
 
 
-def test_z_the_same_key_never_proves_the_same_content() -> None:
-    ports_ = _ports()
-    ports_.references.hold("costs", _costs("costs/2", entry="0.001"))
-    ports_.references.hold("timing", _timing_policy("timing/2", entry=time(11, 0)))
-    base_audit = ports_.run()
-    base = base_audit.proposal
-    assert base is not None
-    for changes in (
-        {"cost_schedule_version": _v("costs/2")},
-        {"timing_policy_version": _v("timing/2")},
-        {"listing_eligibility_version": _v("eligibility/2")},
-        {"modeled_issued_at": _at(9, 41)},
-    ):
-        audit = ports_.run(**changes)
-        assert audit.proposal is not None
-        assert audit.proposal.proposal_key == base.proposal_key, changes
-        assert audit.proposal.document() != base.document(), changes
-    costly = ports_.run(cost_schedule_version=_v("costs/2")).proposal
-    assert costly is not None
-    assert costly.definition.sizing.entry_cost != base.definition.sizing.entry_cost
-    # The audit records every applied input in full, not only its version.
-    inputs = base_audit.document()["inputs"]
-    assert inputs["cost_schedule"] == _costs().document()
-    assert inputs["risk_policy"] == _risk().document()
-    assert inputs["timing_policy"] == _timing_policy().document()
-    assert inputs["price_increment"] == _increment().document()
-    assert inputs["generation_policy"] == _generation().document()
+def test_z_the_audit_records_every_applied_input_in_full() -> None:
+    audit = _ports().run()
+    inputs = audit.assessment_document()["inputs"]
+    assert inputs["format"] == "northstar.equity-recommendation-generation-inputs/1"
+    policy_set = inputs["policy_set"]
+    assert policy_set["cost_schedule"] == _costs().document()
+    assert policy_set["risk_policy"] == _risk().document()
+    assert policy_set["timing_policy"] == _timing_policy().document()
+    assert policy_set["price_increment"] == _increment().document()
+    assert policy_set["generation_policy"] == _generation().document()
+    assert policy_set["reference"] == _policy_set().document()
     assert inputs["listing_eligibility"] == _eligibility().document()
-    assert inputs["venue_reference"] == "test-venue/1"
-    assert inputs["history_reference"] == "test-history/1"
-    assert base_audit.inputs is not None
-    assert {name: version.value for name, version in base_audit.inputs.versions().items()} == {
-        name: value
-        for name, value in base_audit.request.document().items()
-        if name.endswith("_version")
-    }
+    assert inputs["venue_day"]["reference"] == "test-venue/1"
+    assert inputs["issued_history"]["reference"] == "test-history/1"
+    assert inputs["modeled_issued_at"] == _at(9, 36).value
+    assert audit.inputs is not None
+    expected = {k: v for k, v in _policy_set().document().items() if k != "version"}
+    expected["listing_eligibility_version"] = _v("eligibility/1").value
+    assert {name: v.value for name, v in audit.inputs.versions().items()} == expected
 
 
 def test_aa_the_eligibility_audit_document_is_canonical_and_deterministic() -> None:
@@ -1505,20 +1589,25 @@ def test_aa_the_eligibility_audit_document_is_canonical_and_deterministic() -> N
         raise AssertionError(f"float {value}")
 
     document = json.loads(text, parse_float=no_floats)
-    assert document["format"] == "northstar.equity-recommendation-eligibility-audit/1"
-    assert (document["synthetic"], document["authoritative"]) == (True, False)
-    assert document["status"] == "PROPOSED" and document["reasons"] == []
-    assert [c["check"] for c in document["checks"]] == [c.value for c in _C]
-    assert document["proposal"]["issued"] is False
-    assert document["proposal"]["actionable"] is False
-    assert document["entry_window"]["timing"]["issuance_kind"] == "MODELED"
-    assert document["candidate"]["source"]["candidate_entry_fingerprint"].startswith("eirt1-")
-    assert document["request"]["research_configuration"] == _CONFIG.document()
+    assert document["format"] == "northstar.equity-recommendation-eligibility-audit/2"
+    assert document["assessment_fingerprint"] == audit.assessment_fingerprint
+    assessment = document["assessment"]
+    assert assessment["format"] == "northstar.equity-recommendation-assessment/1"
+    assert (assessment["synthetic"], assessment["authoritative"]) == (True, False)
+    assert assessment["status"] == "PROPOSED" and assessment["reasons"] == []
+    assert [c["check"] for c in assessment["checks"]] == [c.value for c in _C]
+    assert all(set(c) == {"check", "status", "reasons"} for c in assessment["checks"])
+    assert assessment["proposal"]["issued"] is False
+    assert assessment["proposal"]["actionable"] is False
+    assert assessment["entry_window"]["timing"]["issuance_kind"] == "MODELED"
+    assert assessment["candidate"]["source"]["candidate_entry_fingerprint"].startswith("eirt1-")
+    assert assessment["request"]["research_configuration"] == _CONFIG.document()
+    assert set(document["diagnostics"]["details"]) == {c.value for c in _C}
     refused = ports_.run(timing_policy_version=_v("timing/missing"))
-    refused_document = json.loads(refused.canonical_json())
+    refused_document = json.loads(refused.canonical_json())["assessment"]
     assert refused_document["status"] == "DEPENDENCY_UNAVAILABLE"
     assert refused_document["reasons"] == ["TIMING_POLICY_UNAVAILABLE"]
-    assert refused_document["proposal"] is None
+    assert refused_document["proposal"] is None and refused_document["generation_key"] is None
 
 
 def test_ab_identical_inputs_give_identical_outputs() -> None:
@@ -1547,7 +1636,12 @@ def test_ac_a_later_correction_never_rewrites_the_candidate_or_its_proposal() ->
     assert after.proposal == before.proposal
     assert after.candidate is not None and before.candidate is not None
     assert after.candidate.source == before.candidate.source
-    assert after.candidate.timeline_head_fingerprint != before.candidate.timeline_head_fingerprint
+    # The frozen assessment is unchanged; only the diagnostic head moved, and
+    # the candidate is never relinked to the corrected snapshot.
+    assert after.assessment_fingerprint == before.assessment_fingerprint
+    assert after.observed_timeline_head != before.observed_timeline_head
+    assert after.candidate.source.evidence_snapshot_id == entries[1].snapshot_id
+    assert entries[-1].snapshot_id != entries[1].snapshot_id
 
 
 def test_ad_a_proposal_is_modeled_synthetic_and_never_an_issuance() -> None:
@@ -1573,6 +1667,10 @@ def test_ad_a_proposal_is_modeled_synthetic_and_never_an_issuance() -> None:
 
 def test_requests_policies_and_audits_are_validated() -> None:
     with pytest.raises(InvalidEquityTradeRecommendationRequestError):
+        _request(listing_eligibility_version="synthetic-ei4c-eligibility/1")
+    with pytest.raises(InvalidEquityTradeRecommendationRequestError):
+        _request(policy_set=_policy_set().document())
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="synthetic"):
         _request(risk_policy_version="synthetic-ei4c-risk/1")
     with pytest.raises(InvalidEquityTradeRecommendationRequestError):
         _request(trading_date=datetime(2026, 8, 12, tzinfo=UTC))
@@ -1591,13 +1689,23 @@ def test_requests_policies_and_audits_are_validated() -> None:
         dataclasses.replace(audit, checks=audit.checks[1:])
     with pytest.raises(InvalidEquityRecommendationEligibilityError):
         dataclasses.replace(audit, proposal=None)
-    assert (
-        equity_trade_recommendation_proposal_key(
-            audit.proposal.definition.source,  # type: ignore[union-attr]
-            _v("generation/1"),
-        )
-        == audit.proposal.proposal_key
-    )  # type: ignore[union-attr]
+    assert audit.proposal is not None
+    legacy = equity_trade_recommendation_proposal_key(
+        audit.proposal.definition.source, _v("generation/1")
+    )
+    # The provisional v1 key keeps its meaning and never collides with eirk1 keys.
+    assert len(legacy) == 64 and not legacy.startswith(EQUITY_RECOMMENDATION_GENERATION_KEY_PREFIX)
+    assert legacy != audit.proposal.generation_key
+    assert legacy == _length_prefixed_sha256(
+        EQUITY_TRADE_RECOMMENDATION_PROPOSAL_NAMESPACE,
+        "ei4c-orb-vwap-volume",
+        "synthetic-ei4c-research/1",
+        "M&M",
+        "NSE",
+        "2026-08-12",
+        audit.proposal.definition.source.candidate_entry_fingerprint,
+        "synthetic-ei4c-generation/1",
+    )
 
 
 # ----------------------------------------------------------------------
@@ -1605,7 +1713,10 @@ def test_requests_policies_and_audits_are_validated() -> None:
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("module", [generate_module, eligibility_module, references_module])
+@pytest.mark.parametrize(
+    "module",
+    [generate_module, eligibility_module, evidence_module, records_module, references_module],
+)
 def test_ae_af_the_modules_stay_application_only_and_model_no_execution(module) -> None:  # type: ignore[no-untyped-def]
     tree = ast.parse(inspect.getsource(module))
     called = {
@@ -1666,8 +1777,10 @@ def test_ae_af_the_modules_stay_application_only_and_model_no_execution(module) 
         if isinstance(name, str)
     }
     for identifier in identifiers:
+        # "disposition" is the approved generation-record term (EI4-D9-A), not a position.
+        name = identifier.replace("disposition", "")
         for forbidden in ("fill", "broker", "paper", "pnl", "profit", "position", "lifecycle"):
-            assert forbidden not in identifier, identifier
+            assert forbidden not in name, identifier
 
 
 def test_the_contracts_are_exported() -> None:
@@ -1695,3 +1808,585 @@ def test_the_contracts_are_exported() -> None:
         "EquityRecommendationHistoryUnavailableError",
     ):
         assert name in ports.__all__
+
+
+# ======================================================================
+# EI-4C compatibility with EI4-D9 and ADR-021 (owner approval 2026-11-07)
+# ======================================================================
+
+
+def _proposed() -> tuple[_Ports, EquityRecommendationEligibilityAudit]:
+    ports_ = _ports()
+    audit = ports_.run()
+    assert audit.status is _S.PROPOSED and audit.inputs is not None
+    return ports_, audit
+
+
+# -- A-D: composite policy-set identity ---------------------------------
+
+
+def test_compat_a_the_resolved_policy_set_binds_every_component_version() -> None:
+    _, audit = _proposed()
+    assert audit.inputs is not None
+    policy_set = audit.inputs.policy_set
+    assert policy_set.reference == _policy_set()
+    assert policy_set.document()["format"] == "northstar.equity-recommendation-policy-set/1"
+    assert policy_set.fingerprint == equity_recommendation_fingerprint(policy_set.document())
+    assert policy_set.timing_policy.modeled_issuance_latency == timedelta(0)
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="version the policy set"):
+        dataclasses.replace(policy_set, risk_policy=_risk("risk/other"))
+
+
+def test_compat_b_identity_ignores_key_order_and_rebuilt_equal_documents() -> None:
+    document = {"format": "northstar.equity-recommendation-policy-set/1", "a": "1", "b": ["2"]}
+    reordered = {"b": ["2"], "a": "1", "format": "northstar.equity-recommendation-policy-set/1"}
+    assert equity_recommendation_fingerprint(document) == equity_recommendation_fingerprint(
+        reordered
+    )
+    _, audit = _proposed()
+    assert audit.inputs is not None
+    rebuilt = EquityResolvedSyntheticPolicySet(
+        _policy_set(), _generation(), _risk(), _costs(), _increment(), _timing_policy()
+    )
+    assert rebuilt.fingerprint == audit.inputs.policy_set.fingerprint
+    source = audit.inputs.candidate.source
+    assert equity_recommendation_generation_key(source, rebuilt) == audit.generation_key
+
+
+@pytest.mark.parametrize(
+    ("kind", "value", "field"),
+    [
+        ("generation", _generation("generation/c"), "generation_policy_version"),
+        ("risk", _risk("risk/c", capital="90000"), "risk_policy_version"),
+        ("costs", _costs("costs/c", entry="0.0004"), "cost_schedule_version"),
+        (
+            "increment",
+            EquityPriceIncrement(Decimal("0.1"), _v("increment/c")),
+            "price_increment_version",
+        ),
+        (
+            "timing",
+            _timing_policy("timing/c", latency=timedelta(seconds=30)),
+            "timing_policy_version",
+        ),
+    ],
+)
+def test_compat_c_every_policy_set_component_changes_the_identity(kind, value, field) -> None:  # type: ignore[no-untyped-def]
+    ports_, base = _proposed()
+    ports_.references.hold(kind, value)
+    changed = ports_.run(**{field: value.version})
+    assert changed.generation_key is not None
+    assert changed.generation_key != base.generation_key
+    renamed = ports_.run(policy_set_version="set/renamed")
+    assert renamed.generation_key not in {base.generation_key, changed.generation_key}
+
+
+def test_compat_c_same_set_version_with_different_content_never_collides() -> None:
+    # Two configurations reusing one set name still differ: the key binds the
+    # policy-set fingerprint as well as its version.
+    ports_, base = _proposed()
+    ports_.references.answers["costs"] = dataclasses.replace(
+        _costs(), slippage_rate_per_side=Decimal("0.0003")
+    )
+    other = ports_.run()
+    assert other.generation_key != base.generation_key
+
+
+def test_compat_d_the_v1_proposal_key_is_kept_and_never_the_generation_key() -> None:
+    _, audit = _proposed()
+    assert audit.proposal is not None and audit.inputs is not None
+    v1 = equity_trade_recommendation_proposal_key(audit.inputs.candidate.source, _v("generation/1"))
+    assert audit.proposal.generation_key.startswith("eirk1-sha256:")
+    assert not v1.startswith("eirk1-") and v1 not in audit.proposal.generation_key
+    assert EQUITY_TRADE_RECOMMENDATION_PROPOSAL_NAMESPACE.endswith(".v1")
+    assert (
+        EQUITY_RECOMMENDATION_GENERATION_KEY_NAMESPACE
+        != EQUITY_TRADE_RECOMMENDATION_PROPOSAL_NAMESPACE
+    )
+
+
+# -- E-J: canonical documents and fingerprints --------------------------
+
+
+def test_compat_e_f_g_assessment_and_proposal_documents_verify() -> None:
+    _, audit = _proposed()
+    assert audit.proposal is not None
+    assessment = canonical_equity_recommendation_json(audit.assessment_document())
+    assert audit.assessment_fingerprint.startswith("eira1-sha256:")
+    decoded = verify_equity_recommendation_document(assessment, audit.assessment_fingerprint)
+    assert decoded["format"] == "northstar.equity-recommendation-assessment/1"
+    proposal = canonical_equity_recommendation_json(audit.proposal.document())
+    assert audit.proposal.fingerprint.startswith("eirp1-sha256:")
+    decoded = verify_equity_recommendation_document(proposal, audit.proposal.fingerprint)
+    assert decoded["format"] == "northstar.equity-recommendation-proposal/1"
+    assert decoded["definition"]["format"] == "northstar.equity-recommendation-core-outcome/1"
+    assert decoded["definition"]["outcome"] == audit.proposal.definition.document()
+    assert audit.inputs is not None and audit.inputs.fingerprint.startswith("eiri1-sha256:")
+    # Tampering, re-encoding or a float never verifies.
+    with pytest.raises(InvalidEquityRecommendationDocumentError, match="fingerprint"):
+        verify_equity_recommendation_document(
+            assessment.replace('"PROPOSED"', '"NOT_ELIGIBLE"', 1), audit.assessment_fingerprint
+        )
+    with pytest.raises(InvalidEquityRecommendationDocumentError, match="canonical"):
+        verify_equity_recommendation_document(
+            json.dumps(json.loads(assessment), indent=1), audit.assessment_fingerprint
+        )
+    with pytest.raises(InvalidEquityRecommendationDocumentError, match="float"):
+        verify_equity_recommendation_document(
+            '{"format":"x","v":1.5}', audit.assessment_fingerprint
+        )
+    with pytest.raises(InvalidEquityRecommendationDocumentError, match="float"):
+        equity_recommendation_fingerprint(
+            {"format": "northstar.equity-recommendation-assessment/1", "v": 1.5}
+        )
+
+
+def test_compat_h_diagnostic_prose_never_moves_a_fingerprint() -> None:
+    _, audit = _proposed()
+    reworded = dataclasses.replace(
+        audit,
+        checks=tuple(dataclasses.replace(c, detail="reworded diagnostics") for c in audit.checks),
+        observed_timeline_head="eirt1-sha256:" + "f" * 64,
+    )
+    assert reworded.assessment_fingerprint == audit.assessment_fingerprint
+    assert reworded.document() != audit.document()
+    # Two outages that differ only in their exception messages are one logical attempt.
+    first, second = _ports(), _ports()
+    first.references.unavailable = {"risk"}
+    second.references.unavailable = {"risk"}
+    a, b = first.run(), second.run()
+    assert a.status is _S.DEPENDENCY_UNAVAILABLE
+    second_detail = dataclasses.replace(
+        b,
+        checks=tuple(dataclasses.replace(c, detail="another exception message") for c in b.checks),
+    )
+    assert (
+        equity_recommendation_attempt(a).attempt_identity
+        == equity_recommendation_attempt(second_detail).attempt_identity
+    )
+
+
+def test_compat_i_stable_reason_codes_are_identity_bearing() -> None:
+    ports_ = _ports()
+    ports_.state.answer = _history(_prior(_LISTING))
+    audit = ports_.run()
+    document = audit.assessment_document()
+    assert document["status"] == "EVALUATION_UNRESOLVED"
+    assert document["reasons"] == ["EXCLUSIVITY_POLICY_UNRESOLVED"]
+    open_check = next(c for c in document["checks"] if c["check"] == "OPEN_RECOMMENDATIONS")
+    assert open_check == {
+        "check": "OPEN_RECOMMENDATIONS",
+        "status": "FAILED",
+        "reasons": ["EXCLUSIVITY_POLICY_UNRESOLVED"],
+    }
+    attempt = json.loads(equity_recommendation_attempt(audit).attempt_document)
+    assert attempt["reasons"] == ["EXCLUSIVITY_POLICY_UNRESOLVED"]
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"status": "PROPOSED"},
+        {"format": "northstar.equity-recommendation-assessment/2", "status": "PROPOSED"},
+        {"format": "northstar.equity-recommendation-eligibility-audit/2"},
+    ],
+)
+def test_compat_j_a_missing_or_unsupported_format_is_refused(document) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(InvalidEquityRecommendationDocumentError, match="format"):
+        equity_recommendation_fingerprint(document)
+    text = canonical_equity_recommendation_json(document)
+    with pytest.raises(InvalidEquityRecommendationDocumentError, match="format"):
+        verify_equity_recommendation_document(text, "eira1-sha256:" + "0" * 64)
+
+
+# -- K-P: derived modeled issuance --------------------------------------
+
+
+def test_compat_k_n_modeled_issuance_is_derived_exactly_from_the_latency() -> None:
+    assert equity_modeled_issuance(_at(9, 36), timedelta(0)) == _at(9, 36)
+    exact = equity_modeled_issuance(_at(9, 36), timedelta(seconds=2, microseconds=123456))
+    assert exact == PointInTime("2026-08-12T04:06:02.123456Z")
+    assert equity_modeled_issuance(exact, timedelta(microseconds=876544)) == PointInTime(
+        "2026-08-12T04:06:03Z"
+    )
+    ports_ = _ports()
+    ports_.references.hold("timing", _timing_policy("timing/us", latency=timedelta(microseconds=1)))
+    audit = ports_.run(timing_policy_version=_v("timing/us"))
+    assert audit.inputs is not None
+    assert audit.inputs.modeled_issued_at == PointInTime("2026-08-12T04:06:00.000001Z")
+    assert ports_.state.asked == [audit.inputs.modeled_issued_at]
+    window = _window(audit)
+    assert window.timing.issuance_kind is EquityIssuanceKind.MODELED
+    assert window.timing.issued_at == audit.inputs.modeled_issued_at
+    assert window.timing.eligible_from == _at(9, 40)
+    assert (
+        audit.inputs.policy_set.timing_policy.document()["modeled_issuance_latency_microseconds"]
+        == 1
+    )
+
+
+def test_compat_l_the_latency_is_a_non_negative_versioned_policy_value() -> None:
+    with pytest.raises(InvalidEquityRecommendationReferenceError, match="latency"):
+        _timing_policy(latency=timedelta(microseconds=-1))
+    with pytest.raises(InvalidEquityRecommendationReferenceError, match="latency"):
+        _timing_policy(latency=60)  # type: ignore[arg-type]
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="non-negative"):
+        equity_modeled_issuance(_at(9, 36), timedelta(seconds=-1))
+
+
+def test_compat_m_a_caller_can_never_supply_or_override_modeled_issuance() -> None:
+    with pytest.raises(TypeError):
+        _request(modeled_issued_at=_at(9, 41))
+    assert "modeled_issued_at" not in _request().document()
+    _, audit = _proposed()
+    assert audit.inputs is not None
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        audit.inputs.modeled_issued_at = _at(9, 41)  # type: ignore[misc]
+    frozen = audit.inputs.issued_history
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="derived modeled issuance"):
+        dataclasses.replace(
+            audit.inputs, issued_history=dataclasses.replace(frozen, as_of=_at(9, 41))
+        )
+
+
+def test_compat_o_the_instants_stay_in_order() -> None:
+    ports_ = _ports()
+    ports_.references.hold("timing", _timing_policy("timing/90s", latency=timedelta(seconds=90)))
+    timing = _window(ports_.run(timing_policy_version=_v("timing/90s"))).timing
+    assert timing.decision_as_of.compare(timing.issued_at) < 0
+    assert timing.issued_at.compare(timing.eligible_from) < 0
+    assert (timing.issued_at, timing.eligible_from) == (_at(9, 37, 30), _at(9, 40))
+
+
+def test_compat_p_late_modeled_issuance_leaves_no_permissible_entry() -> None:
+    ports_ = _ports()
+    # Issuance modeled at 15:36 needs history complete through 15:36; the
+    # default fixture is complete only through 15:30 and fails closed.
+    ports_.references.hold("timing", _timing_policy("timing/6h", latency=timedelta(hours=6)))
+    incomplete = ports_.run(timing_policy_version=_v("timing/6h"))
+    _refused(incomplete, _S.DEPENDENCY_UNAVAILABLE, _R.RECOMMENDATION_HISTORY_INCOMPLETE)
+    ports_.state.answer = _history(through=_at(18, 0))
+    for name, latency in (
+        ("timing/late-entry", timedelta(hours=1, minutes=10)),
+        ("timing/after-window", timedelta(hours=6)),
+    ):
+        ports_.references.hold("timing", _timing_policy(name, latency=latency))
+        audit = ports_.run(timing_policy_version=_v(name))
+        _refused(audit, _S.NOT_ELIGIBLE, _R.NO_PERMISSIBLE_ENTRY_BAR)
+        assert audit.entry_window is None and audit.generation_key is not None
+
+
+# -- Q-S: venue-day evidence --------------------------------------------
+
+
+def test_compat_q_the_venue_day_answer_is_frozen_without_its_prose() -> None:
+    ports_, audit = _proposed()
+    assert audit.inputs is not None
+    venue = audit.inputs.venue_day
+    reference = ports_.world.venue.venue_day(_NSE, _DAY)
+    assert venue == EquityVenueDayEvidence.from_reference(reference)
+    assert venue.document() == {
+        "exchange_code": "NSE",
+        "trading_date": "2026-08-12",
+        "classification": "NORMAL_SESSION",
+        "common_opens_at": _at(9, 15).value,
+        "common_closes_at": _at(15, 30).value,
+        "utc_offset_minutes": 330,
+        "reference": "test-venue/1",
+    }
+    assert EquityVenueDayEvidence.from_document(venue.document()) == venue
+    window = audit.inputs.candidate.document()["research_window"]
+    assert window == {
+        "policy_version": NSE_EQUITY_INTRADAY_V1_RESEARCH_WINDOW.version,
+        "opens_at": _at(9, 15).value,
+        "closes_at": _at(15, 0).value,
+        "timeframe": "5m",
+    }
+
+
+def test_compat_r_replay_uses_the_frozen_venue_answer_not_todays() -> None:
+    ports_, original = _proposed()
+    assert original.inputs is not None
+    ports_.world.venue.closes = time(15, 15)  # the reference later answers differently
+    today = ports_.run()
+    assert today.generation_key == original.generation_key
+    assert today.assessment_fingerprint != original.assessment_fingerprint
+    replayed = assess_equity_recommendation_inputs(_request(), original.inputs)
+    assert replayed.assessment_fingerprint == original.assessment_fingerprint
+    assert replayed.inputs is not None
+    assert replayed.inputs.venue_day.common_closes_at == _at(15, 30)
+
+
+def test_compat_s_missing_or_inconsistent_venue_attributes_fail_closed() -> None:
+    _, audit = _proposed()
+    assert audit.inputs is not None
+    document = audit.inputs.venue_day.document()
+    for key in document:
+        partial = {k: v for k, v in document.items() if k != key}
+        with pytest.raises(InvalidEquityRecommendationEvidenceError):
+            EquityVenueDayEvidence.from_document(partial)
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="UTC offset"):
+        EquityVenueDayEvidence.from_document({**document, "utc_offset_minutes": None})
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="boundaries"):
+        EquityVenueDayEvidence.from_document({**document, "common_closes_at": None})
+    special = {
+        **document,
+        "classification": "SPECIAL_SESSION",
+        "common_opens_at": None,
+        "common_closes_at": None,
+        "utc_offset_minutes": None,
+    }
+    assert EquityVenueDayEvidence.from_document(special).classification is (
+        EquityVenueDayClassification.SPECIAL_SESSION
+    )
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="no boundaries"):
+        EquityVenueDayEvidence.from_document({**special, "utc_offset_minutes": 330})
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="snapshot used"):
+        dataclasses.replace(
+            audit.inputs,
+            venue_day=dataclasses.replace(audit.inputs.venue_day, reference="test-venue/2"),
+        )
+
+
+# -- T-W: point-in-time issued history ----------------------------------
+
+
+def test_compat_t_u_the_frozen_view_keeps_completeness_and_recording_watermark() -> None:
+    record = _history(
+        _issued("open-1", _OTHER, _at(9, 30), sequence=4),
+        _issued("later-1", _LISTING, _at(10, 0), sequence=2),
+        through=_at(15, 30),
+        watermark=7,
+    )
+    view = EquityIssuedHistoryEvidence.as_of_view(record, _at(9, 36))
+    assert [r.recommendation_key for r in view.recommendations] == ["open-1"]
+    assert (view.as_of, view.complete_through, view.recording_watermark) == (
+        _at(9, 36),
+        _at(15, 30),
+        7,
+    )
+    assert view.document()["recommendations"][0]["recording_sequence"] == 4
+    ports_, base = _proposed()
+    ports_.state.answer = _history(watermark=5)
+    rewatermarked = ports_.run()
+    assert rewatermarked.generation_key == base.generation_key
+    assert rewatermarked.assessment_fingerprint != base.assessment_fingerprint
+    assert rewatermarked.inputs is not None
+    assert rewatermarked.inputs.issued_history.recording_watermark == 5
+
+
+def test_compat_v_contradictory_frozen_history_cannot_be_built() -> None:
+    record = _history(_issued("open-1", _OTHER, _at(9, 30)))
+    view = EquityIssuedHistoryEvidence.as_of_view(record, _at(9, 36))
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="complete through"):
+        dataclasses.replace(view, complete_through=_at(9, 35))
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="after its as-of"):
+        dataclasses.replace(view, as_of=_at(9, 25), complete_through=_at(9, 25))
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="watermark"):
+        dataclasses.replace(view, recording_watermark=0)
+    with pytest.raises(InvalidEquityRecommendationEvidenceError, match="not complete"):
+        EquityIssuedHistoryEvidence.as_of_view(_history(through=_at(9, 30)), _at(9, 36))
+
+
+def test_compat_w_no_application_source_fabricates_an_issued_history() -> None:
+    import northstar_application
+
+    sources = [
+        obj
+        for module_name, module in list(__import__("sys").modules.items())
+        if module_name.startswith("northstar_application")
+        for obj in vars(module).values()
+        if isinstance(obj, type)
+        and issubclass(obj, EquitySessionRecommendationHistorySource)
+        and obj is not EquitySessionRecommendationHistorySource
+    ]
+    assert sources == [], northstar_application.__name__
+    ports_ = _ports()
+    ports_.state.answer = None
+    _refused(ports_.run(), _S.DEPENDENCY_UNAVAILABLE, _R.OPEN_RECOMMENDATION_STATE_UNAVAILABLE)
+
+
+# -- X-Z: replay and correction stability ------------------------------
+
+
+def test_compat_x_replaying_frozen_inputs_reproduces_the_assessment() -> None:
+    ports_, original = _proposed()
+    assert original.inputs is not None
+    replayed = assess_equity_recommendation_inputs(_request(), original.inputs)
+    assert replayed.assessment_document() == original.assessment_document()
+    assert replayed.assessment_fingerprint == original.assessment_fingerprint
+    assert replayed.proposal == original.proposal
+    # The sources can change or disappear: the frozen inputs need none of them.
+    ports_.references.unavailable = {"risk", "costs", "timing", "generation", "increment"}
+    ports_.state.unavailable = True
+    assert ports_.run().status is _S.DEPENDENCY_UNAVAILABLE
+    again = assess_equity_recommendation_inputs(_request(), original.inputs)
+    assert again.assessment_fingerprint == original.assessment_fingerprint
+    with pytest.raises(InvalidEquityRecommendationEligibilityError, match="policy set"):
+        assess_equity_recommendation_inputs(_request(policy_set_version="set/2"), original.inputs)
+
+
+def test_compat_y_a_later_correction_never_changes_the_frozen_candidate() -> None:
+    ports_, before = _proposed()
+    ports_.world.add({4: ("101", "103", "101", "101.8", "2000")}, revision="r2")
+    ports_.world.commit(_ist(9, 46), _ist(9, 51))
+    after = ports_.run()
+    assert after.inputs is not None and before.inputs is not None
+    assert after.inputs.candidate == before.inputs.candidate
+    assert after.inputs.fingerprint == before.inputs.fingerprint
+    assert after.assessment_fingerprint == before.assessment_fingerprint
+    assert after.generation_key == before.generation_key
+    assert after.observed_timeline_head != before.observed_timeline_head
+
+
+# -- AA-AB: dispositions and attempts ----------------------------------
+
+
+def test_compat_aa_dispositions_map_from_the_three_assessed_outcomes() -> None:
+    _, proposed = _proposed()
+    disposition = equity_recommendation_disposition(proposed)
+    assert disposition is not None
+    assert disposition.kind is EquityRecommendationDispositionKind.PROPOSED
+    assert disposition.generation_key == proposed.generation_key
+    assert disposition.assessment_fingerprint == proposed.assessment_fingerprint
+    assert proposed.proposal is not None
+    assert disposition.proposal_fingerprint == proposed.proposal.fingerprint
+    assert not disposition.is_issued
+    ports_ = _ports()
+    ports_.references.hold("generation", _generation("generation/strict", minimum="100"))
+    refused = ports_.run(generation_policy_version=_v("generation/strict"))
+    ports_ = _ports()
+    ports_.state.answer = _history(_prior(_LISTING))
+    unresolved = ports_.run()
+    for audit, kind in (
+        (refused, EquityRecommendationDispositionKind.NOT_ELIGIBLE),
+        (unresolved, EquityRecommendationDispositionKind.UNRESOLVED),
+    ):
+        record = equity_recommendation_disposition(audit)
+        assert record is not None and record.kind is kind
+        assert record.proposal_document is None and record.proposal_fingerprint is None
+    assert {kind.value for kind in EquityRecommendationDispositionKind} == {
+        "PROPOSED",
+        "NOT_ELIGIBLE",
+        "UNRESOLVED",
+    }
+    # A recorded kind can never be changed: an UNRESOLVED disposition never becomes PROPOSED.
+    record = equity_recommendation_disposition(unresolved)
+    assert record is not None
+    with pytest.raises(InvalidEquityRecommendationRecordError):
+        dataclasses.replace(record, kind=EquityRecommendationDispositionKind.PROPOSED)
+    with pytest.raises(InvalidEquityRecommendationRecordError):
+        dataclasses.replace(
+            disposition,
+            proposal_document=None,
+            proposal_fingerprint=None,
+        )
+    with pytest.raises(InvalidEquityRecommendationRecordError):
+        dataclasses.replace(
+            disposition,
+            assessment_document=disposition.assessment_document.replace("PROPOSED", "X", 1),
+        )
+
+
+def test_compat_ab_failures_without_an_identity_are_attempt_only() -> None:
+    integrity = _ports()
+    _replace_entry(integrity.world, 1, decision_fingerprint="eir1-sha256:" + "0" * 64)
+    outage = _ports()
+    outage.references.unavailable = {"costs"}
+    mismatch = _ports()
+    for audit, status in (
+        (_Ports(_World()).run(), _S.NO_CANDIDATE),
+        (integrity.run(), _S.RESEARCH_INTEGRITY_FAILURE),
+        (outage.run(), _S.DEPENDENCY_UNAVAILABLE),
+        (
+            mismatch.run(configuration=dataclasses.replace(_CONFIG, version="synthetic-x/2")),
+            _S.NOT_ELIGIBLE,
+        ),
+    ):
+        assert audit.status is status
+        assert audit.generation_key is None
+        assert equity_recommendation_disposition(audit) is None
+        with pytest.raises(InvalidEquityRecommendationRecordError, match="no generation"):
+            EquityRecommendationGenerationDisposition.from_audit(audit)
+        attempt = equity_recommendation_attempt(audit)
+        assert (attempt.status, attempt.generation_key, attempt.disposition_kind) == (
+            status,
+            None,
+            None,
+        )
+        assert attempt.attempt_identity.startswith("eirat1-sha256:")
+    # Identical invocations are one logical attempt; a proposal's attempt names its disposition.
+    _, proposed = _proposed()
+    one, two = equity_recommendation_attempt(proposed), equity_recommendation_attempt(proposed)
+    assert one == two
+    assert one.disposition_kind is EquityRecommendationDispositionKind.PROPOSED
+    assert json.loads(one.attempt_document)["assessment_fingerprint"] == (
+        proposed.assessment_fingerprint
+    )
+    with pytest.raises(InvalidEquityRecommendationRecordError):
+        EquityRecommendationGenerationAttempt("eirat1-sha256:" + "0" * 64, one.attempt_document)
+
+
+# -- AC-AF: boundaries --------------------------------------------------
+
+
+def test_compat_ac_ad_no_storage_issuance_or_lifecycle_contract_is_added() -> None:
+    for module in (evidence_module, records_module, eligibility_module, generate_module):
+        names = [
+            node.name
+            for node in ast.walk(ast.parse(inspect.getsource(module)))
+            if isinstance(node, ast.ClassDef)
+        ]
+        for name in names:
+            assert not name.endswith(("Store", "Repository", "Adapter", "Port")), name
+            assert "Issued" not in name or name == "EquityIssuedHistoryEvidence", name
+        source = inspect.getsource(module)
+        for word in ("sqlite", "INSERT", "COMMIT", "RECORDED", "ACTIVE", "CLOSED_"):
+            assert word not in source.replace("RECORDED`", ""), (module.__name__, word)
+    _, audit = _proposed()
+    assert audit.proposal is not None and not audit.proposal.is_issued
+    assert audit.entry_window is not None
+    assert audit.entry_window.timing.issuance_kind is EquityIssuanceKind.MODELED
+
+
+def test_compat_ae_ei3c_and_ei4b_integration_is_intact() -> None:
+    ports_, audit = _proposed()
+    assert audit.inputs is not None and audit.proposal is not None
+    entry = ports_.world.timelines.only().entries[1]
+    source = audit.inputs.candidate.source
+    assert (source.candidate_entry_fingerprint, source.evidence_snapshot_id) == (
+        entry.entry_fingerprint,
+        entry.snapshot_id,
+    )
+    assert audit.inputs.candidate.manifest_fingerprint == entry.manifest_fingerprint
+    policy = audit.inputs.policy_set
+    direct = form_equity_recommendation(
+        source,
+        audit.inputs.candidate.signal_close,
+        audit.inputs.candidate.opening_range_low,
+        policy.generation_policy,
+        policy.risk_policy,
+        policy.price_increment,
+        policy.cost_schedule,
+    )
+    assert direct == audit.proposal.definition
+    assert direct.sizing.quantity == 195  # type: ignore[union-attr]
+
+
+def test_compat_af_the_compatibility_contracts_are_exported() -> None:
+    for name in (
+        "EquitySyntheticPolicySetReference",
+        "EquityResolvedSyntheticPolicySet",
+        "EquityVenueDayEvidence",
+        "EquityIssuedHistoryEvidence",
+        "EquityRecommendationInputs",
+        "EquityRecommendationGenerationDisposition",
+        "EquityRecommendationGenerationAttempt",
+        "EquityRecommendationDispositionKind",
+        "assess_equity_recommendation_inputs",
+        "equity_recommendation_generation_key",
+        "equity_recommendation_fingerprint",
+        "verify_equity_recommendation_document",
+        "equity_modeled_issuance",
+    ):
+        assert name in application_services.__all__
