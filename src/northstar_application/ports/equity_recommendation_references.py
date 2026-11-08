@@ -61,6 +61,25 @@ class EquitySyntheticReferenceUnavailableError(RuntimeError):
     """Raised when a synthetic reference source cannot answer reliably."""
 
 
+class EquitySyntheticPolicyReferenceConflictError(RuntimeError):
+    """Raised when a published synthetic policy reference cannot be trusted (EI4-D10).
+
+    A permanent integrity conflict, never a transient outage: the reference
+    named by the label is published with other canonical content, or its
+    stored binding does not verify (``incompatible`` when it uses an
+    unsupported format). It is never retried and never resolved by a default.
+    ``reason`` is the machine-readable ``POLICY_REFERENCE_CONFLICT`` (ADR-022,
+    section 8). Added for EI4-D10; implementations that predate it never raise
+    it.
+    """
+
+    reason = "POLICY_REFERENCE_CONFLICT"
+
+    def __init__(self, message: str, *, incompatible: bool = False) -> None:
+        super().__init__(message)
+        self.incompatible = incompatible
+
+
 class EquityRecommendationHistoryUnavailableError(RuntimeError):
     """Raised when authoritative same-session recommendation state cannot be read."""
 
@@ -440,6 +459,11 @@ class EquitySyntheticRecommendationReferenceSource(ABC):
     Each method returns the input stored under exactly ``version``, or None
     when the source holds none. It raises EquitySyntheticReferenceUnavailableError
     when it cannot answer reliably. It never substitutes another version.
+
+    A catalog-backed implementation (EI4-D10, ADR-022) may also raise
+    EquitySyntheticPolicyReferenceConflictError when the published binding for
+    ``version`` cannot be trusted. Callers built before EI4-D10 do not map it;
+    it then propagates and nothing is produced, which fails closed.
     """
 
     @abstractmethod

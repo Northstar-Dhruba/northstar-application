@@ -442,6 +442,29 @@ def _timing_policy(value: object) -> EquitySyntheticEntryTimingPolicy:
     return policy
 
 
+_SYNTHETIC_POLICY_DECODERS = {
+    "generation_policy": _generation_policy,
+    "risk_policy": _risk_policy,
+    "cost_schedule": _cost_schedule,
+    "price_increment": _price_increment,
+    "timing_policy": _timing_policy,
+}
+
+
+def decode_equity_synthetic_policy_component(kind: str, value: object) -> Any:
+    """Rebuild one stored synthetic policy component exactly (EI4-D10).
+
+    ``kind`` is the component's key in the policy-set document --
+    ``generation_policy``, ``risk_policy``, ``cost_schedule``,
+    ``price_increment`` or ``timing_policy`` -- and the same strict decoders
+    as ``decode_equity_policy_set`` apply.
+    """
+    decoder = _SYNTHETIC_POLICY_DECODERS.get(kind)
+    if decoder is None:
+        _bad(f"{kind!r} is not a synthetic policy component.")
+    return _decoding(kind.replace("_", " "), lambda: decoder(value))
+
+
 def decode_equity_policy_set(value: object) -> EquityResolvedSyntheticPolicySet:
     """Rebuild a stored resolved policy set, every component included, exactly."""
 

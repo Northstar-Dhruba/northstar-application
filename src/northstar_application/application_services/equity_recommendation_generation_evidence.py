@@ -17,6 +17,10 @@ is SHA-256 over that encoding, prefixed by its format's namespace:
     northstar.equity-recommendation-assessment/1          eira1-sha256:
     northstar.equity-recommendation-proposal/1            eirp1-sha256:
     northstar.equity-recommendation-generation-attempt/1  eirat1-sha256:
+    northstar.equity-synthetic-policy-definition/1        eipd1-sha256:
+
+The last is the EI4-D10 component policy binding (ADR-022, section 3), defined
+in equity_synthetic_policy_bindings; it never enters a generation record.
 
 Free-text diagnostics -- check details, port exception messages, a venue
 reference's reason -- are never part of these documents, so they never move a
@@ -112,6 +116,8 @@ EQUITY_RECOMMENDATION_ATTEMPT_FORMAT = "northstar.equity-recommendation-generati
 EQUITY_RECOMMENDATION_CORE_OUTCOME_FORMAT = "northstar.equity-recommendation-core-outcome/1"
 EQUITY_RECOMMENDATION_GENERATION_KEY_NAMESPACE = "northstar.equity-recommendation-generation-key/1"
 EQUITY_RECOMMENDATION_GENERATION_KEY_PREFIX = "eirk1-sha256:"
+# EI4-D10 (ADR-022): the canonical binding of one published synthetic policy definition.
+EQUITY_SYNTHETIC_POLICY_DEFINITION_FORMAT = "northstar.equity-synthetic-policy-definition/1"
 
 # The fingerprint namespace of every identity-bearing document format.
 EQUITY_RECOMMENDATION_DOCUMENT_PREFIXES = MappingProxyType(
@@ -121,6 +127,7 @@ EQUITY_RECOMMENDATION_DOCUMENT_PREFIXES = MappingProxyType(
         EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT: "eira1-sha256:",
         EQUITY_RECOMMENDATION_PROPOSAL_FORMAT: "eirp1-sha256:",
         EQUITY_RECOMMENDATION_ATTEMPT_FORMAT: "eirat1-sha256:",
+        EQUITY_SYNTHETIC_POLICY_DEFINITION_FORMAT: "eipd1-sha256:",
     }
 )
 
