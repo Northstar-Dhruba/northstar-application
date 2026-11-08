@@ -45,6 +45,14 @@ from northstar_application.application_services.analyze_watchlist import (
     AnalyzeWatchlistResult,
     AnalyzeWatchlistUseCase,
 )
+from northstar_application.application_services.audit_equity_recommendation_policy_bindings import (
+    AuditEquityRecommendationPolicyBindingsUseCase,
+    EquityRecommendationPolicyBindingAudit,
+    EquityRecommendationPolicyBindingEvidence,
+    EquityRecommendationPolicyBindingFinding,
+    EquityRecommendationPolicyBindingRecordAudit,
+    EquityRecommendationPolicyBindingStatus,
+)
 from northstar_application.application_services.build_forward_research_report import (
     BuildForwardResearchReportUseCase,
     ForwardResearchReport,
@@ -136,6 +144,9 @@ from northstar_application.application_services.calculate_historical_research_me
 from northstar_application.application_services.calculate_paper_trading_metrics import (
     CalculatePaperTradingMetricsUseCase,
     PaperTradingStrategyListingMetrics,
+)
+from northstar_application.application_services.catalog_equity_synthetic_recommendation_references import (  # noqa: E501
+    CatalogEquitySyntheticRecommendationReferences,
 )
 from northstar_application.application_services.create_execution_intent import (
     CreateExecutionIntentUseCase,
@@ -246,6 +257,7 @@ from northstar_application.application_services.equity_recommendation_generation
     EQUITY_RECOMMENDATION_INPUTS_FORMAT,
     EQUITY_RECOMMENDATION_POLICY_SET_FORMAT,
     EQUITY_RECOMMENDATION_PROPOSAL_FORMAT,
+    EQUITY_SYNTHETIC_POLICY_DEFINITION_FORMAT,
     EquityIssuedHistoryEvidence,
     EquityRecommendationCandidateProvenance,
     EquityRecommendationInputs,
@@ -281,6 +293,18 @@ from northstar_application.application_services.equity_session_interval_grid imp
     EquitySessionInterval,
     EquitySessionIntervalGrid,
     InvalidEquitySessionIntervalGridError,
+)
+from northstar_application.application_services.equity_synthetic_policy_bindings import (
+    EQUITY_SYNTHETIC_POLICY_COMPONENT_TYPES,
+    EQUITY_SYNTHETIC_POLICY_DEFINITION_PREFIX,
+    EQUITY_SYNTHETIC_POLICY_NAMESPACE,
+    EquitySyntheticPolicyBindingIdentity,
+    EquitySyntheticPolicyBundle,
+    EquitySyntheticPolicyDefinitionBinding,
+    EquitySyntheticPolicySetBinding,
+    EquitySyntheticPolicyType,
+    IncompatibleEquitySyntheticPolicyBindingError,
+    InvalidEquitySyntheticPolicyBindingError,
 )
 from northstar_application.application_services.equity_trade_recommendation_eligibility import (  # noqa: E501
     EQUITY_CORE_UNRESOLVED_REASONS,
@@ -478,6 +502,12 @@ from northstar_application.application_services.monitor_futures_trade_recommenda
     MonitorFuturesTradeRecommendationsUseCase,
 )
 from northstar_application.application_services.paper_trading_run import PaperTradingRun
+from northstar_application.application_services.publish_equity_synthetic_policies import (
+    EQUITY_SYNTHETIC_POLICY_PUBLICATION_WRITES,
+    EquitySyntheticPolicyPublicationOutcome,
+    EquitySyntheticPolicyPublicationResult,
+    PublishEquitySyntheticPoliciesUseCase,
+)
 from northstar_application.application_services.record_equity_recommendation_generation import (  # noqa: E501
     EQUITY_RECOMMENDATION_RECORD_WRITES,
     EquityRecommendationRecordingOutcome,
@@ -964,4 +994,26 @@ __all__ = [
     "parse_futures_historical_dataset_manifest",
     "verify_futures_historical_dataset_catalog",
     "verify_futures_historical_dataset_revision",
+    "AuditEquityRecommendationPolicyBindingsUseCase",
+    "EquityRecommendationPolicyBindingAudit",
+    "EquityRecommendationPolicyBindingEvidence",
+    "EquityRecommendationPolicyBindingFinding",
+    "EquityRecommendationPolicyBindingRecordAudit",
+    "EquityRecommendationPolicyBindingStatus",
+    "CatalogEquitySyntheticRecommendationReferences",
+    "EQUITY_SYNTHETIC_POLICY_COMPONENT_TYPES",
+    "EQUITY_SYNTHETIC_POLICY_DEFINITION_PREFIX",
+    "EQUITY_SYNTHETIC_POLICY_NAMESPACE",
+    "EquitySyntheticPolicyBindingIdentity",
+    "EquitySyntheticPolicyBundle",
+    "EquitySyntheticPolicyDefinitionBinding",
+    "EquitySyntheticPolicySetBinding",
+    "EquitySyntheticPolicyType",
+    "IncompatibleEquitySyntheticPolicyBindingError",
+    "InvalidEquitySyntheticPolicyBindingError",
+    "EQUITY_SYNTHETIC_POLICY_PUBLICATION_WRITES",
+    "EquitySyntheticPolicyPublicationOutcome",
+    "EquitySyntheticPolicyPublicationResult",
+    "PublishEquitySyntheticPoliciesUseCase",
+    "EQUITY_SYNTHETIC_POLICY_DEFINITION_FORMAT",
 ]
