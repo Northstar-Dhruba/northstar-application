@@ -41,6 +41,8 @@ from northstar_application.application_services import (
     IncompatibleEquityRecommendationRecordError,
     InvalidEquityRecommendationRecordError,
     RecordEquityRecommendationGenerationUseCase,
+    VerifiedEquityRecommendationAttemptWrite,
+    VerifiedEquityRecommendationGenerationWrite,
     VerifyStoredEquityRecommendationGenerationUseCase,
     canonical_equity_recommendation_json,
     decode_equity_core_outcome,
@@ -53,6 +55,8 @@ from northstar_application.application_services import (
     equity_recommendation_attempt,
     equity_recommendation_disposition,
     equity_recommendation_fingerprint,
+    require_verified_equity_recommendation_attempt_write,
+    require_verified_equity_recommendation_generation_write,
 )
 from northstar_application.application_services import (
     equity_recommendation_generation_decoding as decoding_module,
@@ -196,16 +200,24 @@ class _Store(EquityRecommendationGenerationStore):
         )
         return EquityRecommendationStoreWrite(outcome, stored, inserted)
 
-    def record_generation(
-        self, disposition: Disposition, attempt: Attempt
+    # The authorized writes (EI4-D11): like an adapter, the double validates the
+    # recorder-issued authorization first, with the public validators, and
+    # writes only the content it covers. A refused write counts no write.
+
+    def write_generation(
+        self, authorization: VerifiedEquityRecommendationGenerationWrite
     ) -> EquityRecommendationStoreWrite:
+        verified = require_verified_equity_recommendation_generation_write(authorization)
         mode = self._behaviour()
-        write = self.commit_generation(disposition, attempt)
+        write = self.commit_generation(verified.disposition, verified.attempt)
         if mode == "lost_after":
             raise EquityRecommendationGenerationCommitUnconfirmedError("test: ack lost")
         return write
 
-    def record_attempt(self, attempt: Attempt) -> EquityRecommendationStoreWrite:
+    def write_attempt(
+        self, authorization: VerifiedEquityRecommendationAttemptWrite
+    ) -> EquityRecommendationStoreWrite:
+        attempt = require_verified_equity_recommendation_attempt_write(authorization).attempt
         mode = self._behaviour()
         inserted = self._insert_attempt(attempt)
         if mode == "lost_after":
@@ -1482,10 +1494,12 @@ class _Defective(_Store):
         super().__init__()
         self.where = where
 
-    def record_attempt(self, attempt: Attempt) -> EquityRecommendationStoreWrite:
+    def write_attempt(
+        self, authorization: VerifiedEquityRecommendationAttemptWrite
+    ) -> EquityRecommendationStoreWrite:
         if self.where == "write":
             raise TypeError("test: a defect in the store")
-        return super().record_attempt(attempt)
+        return super().write_attempt(authorization)
 
     def load_attempt(self, attempt_identity: str) -> Attempt | None:
         if self.where == "reload":
