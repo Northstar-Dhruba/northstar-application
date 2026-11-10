@@ -59,7 +59,7 @@ from northstar_application.application_services.equity_synthetic_policy_bindings
     InvalidEquitySyntheticPolicyBindingError,
 )
 from northstar_application.ports.equity_recommendation_generation_store import (
-    EquityRecommendationGenerationStore,
+    EquityRecommendationGenerationRecordReader,
     EquityRecommendationGenerationStoreUnavailableError,
 )
 from northstar_application.ports.equity_synthetic_policy_catalog_store import (
@@ -157,12 +157,12 @@ class AuditEquityRecommendationPolicyBindingsUseCase:
 
     def __init__(
         self,
-        records: EquityRecommendationGenerationStore,
+        records: EquityRecommendationGenerationRecordReader,
         catalog: EquitySyntheticPolicyCatalogStore,
         publication_history: EquitySyntheticPolicyPublicationHistory | None = None,
     ) -> None:
-        if not isinstance(records, EquityRecommendationGenerationStore):
-            raise TypeError("records must be an EquityRecommendationGenerationStore.")
+        if not isinstance(records, EquityRecommendationGenerationRecordReader):
+            raise TypeError("records must be an EquityRecommendationGenerationRecordReader.")
         if not isinstance(catalog, EquitySyntheticPolicyCatalogStore):
             raise TypeError("catalog must be an EquitySyntheticPolicyCatalogStore.")
         if publication_history is not None and not isinstance(

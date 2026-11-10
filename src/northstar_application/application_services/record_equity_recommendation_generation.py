@@ -36,7 +36,15 @@ Recording a disposition
 3. The disposition is verified before anything is written: its original
    CANDIDATE and EI-2B snapshot through EI-3C, and its assessment by replay
    from its frozen inputs (EquityRecommendationGenerationVerifier).
-4. ``record_generation`` writes the disposition, its proposal and the attempt
+   Only after the gate and this verification pass does the recorder issue a
+   VerifiedEquityRecommendationGenerationWrite (EI4-D11, ADR-023): an
+   authorization bound to the exact disposition, proposal and attempt, the
+   verifier's actual result and the verified policy check
+   (equity_recommendation_generation_write_authorization). It issues one per
+   operation and reuses it, unchanged, for the bounded retries below. An
+   attempt-only result gets a VerifiedEquityRecommendationAttemptWrite for
+   exactly that attempt, with no policy evidence.
+4. ``write_generation(authorization)`` writes the disposition, its proposal and the attempt
    as ONE atomic port operation, and its committed outcome is interpreted:
 
    - COMMITTED: this write recorded the disposition;
@@ -58,7 +66,8 @@ once, authoritatively:
   EVALUATOR_VERSION_CONFLICT, never equivalence -- no fingerprint covers the
   evaluator, so it is compared explicitly;
 - nothing is stored, after a successful reload: the write is retried with the
-  same records -- never regenerated from fresh references -- at most
+  same records under the same authorization -- never regenerated from fresh
+  references, never re-authorized -- at most
   ``max_writes`` writes in all, then RETRY_LIMIT_REACHED;
 - the reload fails, or returns a record that does not decode:
   COMMIT_RECONCILIATION_UNRESOLVED. Nothing is claimed either way.
@@ -97,6 +106,10 @@ from northstar_application.application_services.equity_recommendation_generation
     equity_recommendation_attempt,
     equity_recommendation_disposition,
 )
+from northstar_application.application_services.equity_recommendation_generation_write_authorization import (  # noqa: E501
+    _issue_attempt_write,
+    _issue_generation_write,
+)
 from northstar_application.application_services.equity_trade_recommendation_eligibility import (
     EquityRecommendationEligibilityAudit,
 )
@@ -105,6 +118,7 @@ from northstar_application.application_services.verify_equity_recommendation_gen
     EquityRecommendationReplayMismatchError,
     EquityRecommendationSourceUnavailableError,
     EquityRecommendationSourceVerificationError,
+    EquityVerifiedRecommendationGeneration,
 )
 from northstar_application.application_services.verify_equity_synthetic_policy_bindings import (
     EquitySyntheticPolicyBindingVerdict,
@@ -314,15 +328,19 @@ class RecordEquityRecommendationGenerationUseCase:
                 f"catalog ({policy.verdict.value}). {policy.describe()}",
             )
 
-        refused = self._verified(disposition)
-        if refused is not None:
-            outcome, detail = refused
+        verification = self._verification(disposition)
+        if not isinstance(verification, EquityVerifiedRecommendationGeneration):
+            outcome, detail = verification
             return result(outcome, f"Not written: {detail}")
 
+        # EI4-D11 (ADR-023): every check passed, so -- and only now -- the
+        # recorder authorizes this exact write. The one authorization is reused,
+        # unchanged, for the bounded retries of this same operation.
+        authorization = _issue_generation_write(verification, policy, attempt)
         key = disposition.generation_key
         for write in range(1, self._max_writes + 1):
             try:
-                stored = self._store.record_generation(disposition, attempt)
+                stored = self._store.write_generation(authorization)
             except EquityRecommendationGenerationStoreUnavailableError as exc:
                 return result(
                     _O.PERSISTENCE_UNAVAILABLE, f"Storage unavailable: {exc}", writes=write
@@ -374,11 +392,12 @@ class RecordEquityRecommendationGenerationUseCase:
             writes=self._max_writes,
         )
 
-    def _verified(
+    def _verification(
         self, disposition: EquityRecommendationGenerationDisposition
-    ) -> tuple[EquityRecommendationRecordingOutcome, str] | None:
+    ) -> EquityVerifiedRecommendationGeneration | tuple[EquityRecommendationRecordingOutcome, str]:
+        """Return the verifier's actual result, or the refusal it establishes."""
         try:
-            self._verifier.verify(disposition)
+            return self._verifier.verify(disposition)
         except EquityRecommendationSourceUnavailableError as exc:
             return _O.SOURCE_EVIDENCE_UNAVAILABLE, f"Source evidence unavailable: {exc}"
         except EquityRecommendationSourceVerificationError as exc:
@@ -387,7 +406,14 @@ class RecordEquityRecommendationGenerationUseCase:
             return _O.REPLAY_MISMATCH, str(exc)
         except IncompatibleEquityRecommendationRecordError as exc:
             return _O.STORED_RECORD_INCOMPATIBLE, str(exc)
-        return None
+
+    def _verified(
+        self, disposition: EquityRecommendationGenerationDisposition
+    ) -> tuple[EquityRecommendationRecordingOutcome, str] | None:
+        verification = self._verification(disposition)
+        if isinstance(verification, EquityVerifiedRecommendationGeneration):
+            return None
+        return verification
 
     def _interpret(
         self,
@@ -537,9 +563,13 @@ class RecordEquityRecommendationGenerationUseCase:
                 outcome, attempt, None, None, attempt_recorded, reconciled, writes, detail
             )
 
+        # EI4-D11 (ADR-023): authorize exactly this attempt-only write. No policy
+        # evidence, assessment or disposition is needed or fabricated; the one
+        # authorization is reused for the bounded retries of this operation.
+        authorization = _issue_attempt_write(attempt)
         for write in range(1, self._max_writes + 1):
             try:
-                stored = self._store.record_attempt(attempt)
+                stored = self._store.write_attempt(authorization)
             except EquityRecommendationGenerationStoreUnavailableError as exc:
                 return result(
                     _O.PERSISTENCE_UNAVAILABLE,

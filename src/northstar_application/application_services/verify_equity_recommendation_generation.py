@@ -65,7 +65,7 @@ from northstar_application.ports.equity_intraday_research_timeline_store import 
     EquityIntradayResearchTimelineStore,
 )
 from northstar_application.ports.equity_recommendation_generation_store import (
-    EquityRecommendationGenerationStore,
+    EquityRecommendationGenerationRecordReader,
 )
 
 _SOURCE_OUTAGES = frozenset(
@@ -205,11 +205,11 @@ class VerifyStoredEquityRecommendationGenerationUseCase:
 
     def __init__(
         self,
-        store: EquityRecommendationGenerationStore,
+        store: EquityRecommendationGenerationRecordReader,
         verifier: EquityRecommendationGenerationVerifier,
     ) -> None:
-        if not isinstance(store, EquityRecommendationGenerationStore):
-            raise TypeError("store must be an EquityRecommendationGenerationStore.")
+        if not isinstance(store, EquityRecommendationGenerationRecordReader):
+            raise TypeError("store must be an EquityRecommendationGenerationRecordReader.")
         if not isinstance(verifier, EquityRecommendationGenerationVerifier):
             raise TypeError("verifier must be an EquityRecommendationGenerationVerifier.")
         self._store = store
