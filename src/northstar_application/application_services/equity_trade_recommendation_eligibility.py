@@ -16,7 +16,13 @@ the reasons it recorded, in this precedence:
    evidence failed verification. It is never reported as NO_SIGNAL or as an
    ordinary rejection.
 2. DEPENDENCY_UNAVAILABLE -- a required input is missing, unknown,
-   inconsistent or its source cannot answer. Generation fails closed.
+   inconsistent or its source cannot answer. Generation fails closed. It
+   includes the EI4-D10 policy-catalog reasons (ADR-022 section 8):
+   POLICY_REFERENCE_CONFLICT, a published label bound to other content -- a
+   permanent integrity conflict, never a transient outage, never retried --
+   and POLICY_SET_UNAVAILABLE, a composite set that is not published or
+   cannot be read. Callers distinguish a conflict from an outage by these
+   reasons, never by the status.
 3. NO_CANDIDATE -- the verified history holds no CANDIDATE (EI4-D2).
 4. NOT_ELIGIBLE -- the candidate was evaluated and a confirmed check refused
    it, Core formation rejections included, with Core's exact reasons kept.
@@ -211,6 +217,10 @@ class EquityRecommendationEligibilityReason(StrEnum):
     COST_SCHEDULE_UNAVAILABLE = "COST_SCHEDULE_UNAVAILABLE"
     PRICE_INCREMENT_UNAVAILABLE = "PRICE_INCREMENT_UNAVAILABLE"
     POLICY_REFERENCE_MISMATCH = "POLICY_REFERENCE_MISMATCH"
+    # Policy catalog (EI4-D10, ADR-022 section 8): a permanent integrity conflict,
+    # and an unpublished composite set. Both are DEPENDENCY_UNAVAILABLE.
+    POLICY_REFERENCE_CONFLICT = "POLICY_REFERENCE_CONFLICT"
+    POLICY_SET_UNAVAILABLE = "POLICY_SET_UNAVAILABLE"
     SESSION_REFERENCE_UNAVAILABLE = "SESSION_REFERENCE_UNAVAILABLE"
     SESSION_REFERENCE_MISMATCH = "SESSION_REFERENCE_MISMATCH"
     LISTING_REFERENCE_UNAVAILABLE = "LISTING_REFERENCE_UNAVAILABLE"
@@ -255,6 +265,8 @@ _DEPENDENCY = frozenset(
         _R.COST_SCHEDULE_UNAVAILABLE,
         _R.PRICE_INCREMENT_UNAVAILABLE,
         _R.POLICY_REFERENCE_MISMATCH,
+        _R.POLICY_REFERENCE_CONFLICT,
+        _R.POLICY_SET_UNAVAILABLE,
         _R.SESSION_REFERENCE_UNAVAILABLE,
         _R.SESSION_REFERENCE_MISMATCH,
         _R.LISTING_REFERENCE_UNAVAILABLE,

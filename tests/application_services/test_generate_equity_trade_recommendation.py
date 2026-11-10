@@ -18,6 +18,7 @@ import dataclasses
 import hashlib
 import inspect
 import json
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -87,17 +88,25 @@ from northstar_application.application_services import (
     EquityRecommendationGenerationStatus,
     EquityResearchWindowEvaluation,
     EquityResolvedSyntheticPolicySet,
+    EquitySyntheticPolicyBindingIdentity,
+    EquitySyntheticPolicyBundle,
+    EquitySyntheticPolicyDefinitionBinding,
+    EquitySyntheticPolicyPublicationResult,
+    EquitySyntheticPolicySetBinding,
     EquitySyntheticPolicySetReference,
     EquityTradeRecommendationRequest,
     EquityVenueDayEvidence,
     EvaluateEquityResearchWindowUseCase,
     GenerateEquityTradeRecommendationUseCase,
+    IncompatibleEquitySyntheticPolicyBindingError,
     InvalidEquityRecommendationDocumentError,
     InvalidEquityRecommendationEligibilityError,
     InvalidEquityRecommendationEvidenceError,
     InvalidEquityRecommendationRecordError,
+    InvalidEquitySyntheticPolicyBindingError,
     InvalidEquityTradeRecommendationRequestError,
     IssueEquityCandleEvidenceSnapshotUseCase,
+    PublishEquitySyntheticPoliciesUseCase,
     StoredEquityIntradayResearchTimeline,
     assess_equity_recommendation_inputs,
     canonical_equity_candle_json,
@@ -151,6 +160,12 @@ from northstar_application.ports import (
     EquitySyntheticEntryTimingPolicy,
     EquitySyntheticListingEligibility,
     EquitySyntheticListingEligibilitySource,
+    EquitySyntheticPolicyCatalogCommitUnconfirmedError,
+    EquitySyntheticPolicyCatalogNotCommittedError,
+    EquitySyntheticPolicyCatalogOutcome,
+    EquitySyntheticPolicyCatalogStore,
+    EquitySyntheticPolicyCatalogUnavailableError,
+    EquitySyntheticPolicyCatalogWrite,
     EquitySyntheticRecommendationReferenceSource,
     EquitySyntheticReferenceUnavailableError,
     EquityVenueDayClassification,
@@ -650,12 +665,138 @@ class _State(EquitySessionRecommendationHistorySource):
         return self.answer
 
 
+_CatalogBinding = EquitySyntheticPolicyDefinitionBinding | EquitySyntheticPolicySetBinding
+
+
+class _Catalog(EquitySyntheticPolicyCatalogStore):
+    """Deterministic test double of the EI4-D10 catalog port; stores canonical text only.
+
+    It rebuilds every binding with ``from_stored`` on load, as an adapter
+    must, so a corrupted entry fails exactly as a stored one would. Its
+    scripted failures exercise the Application's semantics; nothing here
+    establishes SQLite durability, atomicity or cross-process correctness.
+    """
+
+    def __init__(self) -> None:
+        self.definitions: dict[EquitySyntheticPolicyBindingIdentity, tuple[str, str]] = {}
+        self.sets: dict[EquitySyntheticPolicyBindingIdentity, tuple[str, str]] = {}
+        self.script: list[str] = []
+        self.load_failure: str | None = None
+        self.before_load: Callable[[], None] | None = None
+        self.publishes = 0
+        self.loads = 0
+
+    def seed(self, bundle: EquitySyntheticPolicyBundle, *, with_set: bool = True) -> None:
+        """Test setup: store a bundle's bindings directly."""
+        for c in bundle.components:
+            self.definitions.setdefault(c.identity, (c.canonical_json(), c.fingerprint))
+        if with_set:
+            s = bundle.policy_set
+            self.sets.setdefault(s.identity, (s.reference_json(), s.policy_set_fingerprint))
+
+    def _definition(
+        self, identity: EquitySyntheticPolicyBindingIdentity
+    ) -> EquitySyntheticPolicyDefinitionBinding | None:
+        raw = self.definitions.get(identity)
+        return None if raw is None else EquitySyntheticPolicyDefinitionBinding.from_stored(*raw)
+
+    def _set(
+        self, identity: EquitySyntheticPolicyBindingIdentity
+    ) -> EquitySyntheticPolicySetBinding | None:
+        raw = self.sets.get(identity)
+        return (
+            None
+            if raw is None
+            else EquitySyntheticPolicySetBinding.from_stored(identity.namespace, *raw)
+        )
+
+    def _before_load(self) -> None:
+        if self.before_load is not None:
+            hook, self.before_load = self.before_load, None
+            hook()
+        self.loads += 1
+        if self.load_failure == "unavailable":
+            raise EquitySyntheticPolicyCatalogUnavailableError("test: catalog down")
+        if self.load_failure == "invalid":
+            raise InvalidEquitySyntheticPolicyBindingError("test: a stored row is corrupt")
+
+    def load_definition(self, identity):  # type: ignore[no-untyped-def]
+        self._before_load()
+        return self._definition(identity)
+
+    def load_policy_set(self, identity):  # type: ignore[no-untyped-def]
+        self._before_load()
+        return self._set(identity)
+
+    def publish(self, bundle: EquitySyntheticPolicyBundle) -> EquitySyntheticPolicyCatalogWrite:
+        self.publishes += 1
+        mode = self.script.pop(0) if self.script else "ok"
+        failures = {
+            "unavailable": EquitySyntheticPolicyCatalogUnavailableError("test: catalog down"),
+            "rollback": EquitySyntheticPolicyCatalogNotCommittedError("test: rolled back"),
+            "invalid": InvalidEquitySyntheticPolicyBindingError("test: stored row corrupt"),
+            "incompatible": IncompatibleEquitySyntheticPolicyBindingError("test: format /2"),
+            "lost_before": EquitySyntheticPolicyCatalogCommitUnconfirmedError(
+                "test: COMMIT failed"
+            ),
+        }
+        if mode in failures:
+            raise failures[mode]
+        outcome_type = EquitySyntheticPolicyCatalogOutcome
+        if mode == "contradicting":
+            return EquitySyntheticPolicyCatalogWrite(outcome_type.CONFLICT, (bundle.policy_set,))
+        conflicts: list[_CatalogBinding] = []
+        present = 0
+        for offered in (*bundle.components, bundle.policy_set):
+            stored = (
+                self._set(offered.identity)
+                if isinstance(offered, EquitySyntheticPolicySetBinding)
+                else self._definition(offered.identity)
+            )
+            if stored is not None:
+                present += 1
+                if stored != offered:
+                    conflicts.append(stored)
+        if conflicts:
+            return EquitySyntheticPolicyCatalogWrite(outcome_type.CONFLICT, tuple(conflicts))
+        outcome = outcome_type.EQUIVALENT if present == 6 else outcome_type.COMMITTED
+        self.seed(bundle)
+        if mode == "lost_after":
+            raise EquitySyntheticPolicyCatalogCommitUnconfirmedError("test: ack lost after COMMIT")
+        return EquitySyntheticPolicyCatalogWrite(outcome, ())
+
+    def rows(self) -> tuple[dict[Any, Any], dict[Any, Any]]:
+        return dict(self.definitions), dict(self.sets)
+
+
+_HELD = (
+    ("generation", "generation_policy_version", "generation_policy"),
+    ("risk", "risk_policy_version", "risk_policy"),
+    ("costs", "cost_schedule_version", "cost_schedule"),
+    ("increment", "price_increment_version", "price_increment"),
+    ("timing", "timing_policy_version", "timing_policy"),
+)
+
+
 class _Ports:
+    """The generator's ports, and the published-policy catalog (EI4-D10).
+
+    ``catalog`` is the catalog generation reads, and recording too. As test
+    setup, ``run`` first publishes -- explicitly, through the real S1
+    PublishEquitySyntheticPoliciesUseCase -- the policy set the request names,
+    from the definitions ``references`` holds. A label later held with other
+    content is then a conflicting reuse: publication refuses it, the first
+    binding stays, and generation reports POLICY_REFERENCE_CONFLICT. Tests of
+    unpublished or failing catalogs set ``publish`` False.
+    """
+
     def __init__(self, world: _World) -> None:
         self.world = world
         self.references = _References()
         self.eligibility = _Eligibility()
         self.state = _State()
+        self.catalog = _Catalog()
+        self.publish = True
 
     def use_case(self) -> GenerateEquityTradeRecommendationUseCase:
         return GenerateEquityTradeRecommendationUseCase(
@@ -665,10 +806,34 @@ class _Ports:
             self.references,
             self.eligibility,
             self.state,
+            self.catalog,
         )
 
+    def publish_policies(
+        self, reference: EquitySyntheticPolicySetReference
+    ) -> EquitySyntheticPolicyPublicationResult | None:
+        """Test setup: publish ``reference`` and the held components it names, if all held."""
+        if not isinstance(self.references, _References):
+            return None
+        components = {
+            field: self.references.held[kind].get(getattr(reference, label).value)
+            for kind, label, field in _HELD
+        }
+        if any(component is None for component in components.values()):
+            return None
+        try:
+            bundle = EquitySyntheticPolicyBundle.of(
+                EquityResolvedSyntheticPolicySet(reference=reference, **components)
+            )
+        except (InvalidEquityRecommendationEvidenceError, InvalidEquitySyntheticPolicyBindingError):
+            return None
+        return PublishEquitySyntheticPoliciesUseCase(self.catalog).execute(bundle)
+
     def run(self, **changes: Any) -> EquityRecommendationEligibilityAudit:
-        return self.use_case().execute(_request(**changes))
+        request = _request(**changes)
+        if self.publish:
+            self.publish_policies(request.policy_set)
+        return self.use_case().execute(request)
 
 
 _POLICY_FIELDS = (
@@ -692,10 +857,26 @@ def _policy_set(set_version: str = "set/1", **versions: Any) -> EquitySyntheticP
     return EquitySyntheticPolicySetReference(_v(set_version), **components)
 
 
+def _set_label(components: dict[str, Any]) -> str:
+    """The set label a request names unless it states one (EI4-D10).
+
+    A published set label binds exactly its five component labels, so a set
+    naming other components is another set: "set/1" plus the changed labels.
+    The default set keeps "set/1", and with it its pinned identities.
+    """
+    defaults = _policy_set()
+    changed = [
+        version.value.removeprefix("synthetic-ei4c-")
+        for name, version in components.items()
+        if isinstance(version, EquitySyntheticVersion) and version != getattr(defaults, name)
+    ]
+    return "+".join(["set/1", *changed])
+
+
 def _request(**changes: Any) -> EquityTradeRecommendationRequest:
     """Build a request; component version keywords build its policy set."""
     components = {name: changes.pop(name) for name in _POLICY_FIELDS if name in changes}
-    set_version = changes.pop("policy_set_version", "set/1")
+    set_version = changes.pop("policy_set_version", None) or _set_label(components)
     values: dict[str, Any] = {
         "configuration": _CONFIG,
         "listing": _LISTING,
@@ -1881,15 +2062,19 @@ def test_compat_c_every_policy_set_component_changes_the_identity(kind, value, f
     assert renamed.generation_key not in {base.generation_key, changed.generation_key}
 
 
-def test_compat_c_same_set_version_with_different_content_never_collides() -> None:
-    # Two configurations reusing one set name still differ: the key binds the
-    # policy-set fingerprint as well as its version.
+def test_compat_c_same_set_version_with_different_content_is_a_policy_reference_conflict() -> None:
+    # Before EI4-D10-S3 a reused set and component label with other content
+    # produced a second generation key (EI-4E AA-1). The catalog now publishes
+    # costs/1 as its first content, so other content under the label is a
+    # permanent conflict: no key, no inputs, nothing to record but the attempt.
     ports_, base = _proposed()
     ports_.references.answers["costs"] = dataclasses.replace(
         _costs(), slippage_rate_per_side=Decimal("0.0003")
     )
     other = ports_.run()
-    assert other.generation_key != base.generation_key
+    _refused(other, _S.DEPENDENCY_UNAVAILABLE, _R.POLICY_REFERENCE_CONFLICT)
+    assert other.generation_key is None and other.inputs is None
+    assert base.generation_key is not None
 
 
 def test_compat_d_the_v1_proposal_key_is_kept_and_never_the_generation_key() -> None:

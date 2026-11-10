@@ -36,7 +36,19 @@ earlier step passed:
    the research window's five-minute grid. The signal close and opening-range
    low are the EI-3A decision's own values, in the snapshot's currency.
 2. SYNTHETIC_REFERENCES. The policy set's five components are loaded by their
-   exact versions, then the venue-day reference, the listing eligibility and
+   exact versions. When all five are found, the resolved set is checked
+   against the immutable policy catalog (EI4-D10, ADR-022 section 7, layer
+   D; verify_equity_synthetic_policy_bindings): its five component bindings
+   and its POLICY_SET binding must each be published with exactly this
+   canonical content and fingerprint, so a reused label never yields
+   another generation key. A label the catalog does not publish, or cannot
+   answer, is the component's existing ``*_UNAVAILABLE`` reason, or
+   POLICY_SET_UNAVAILABLE for the set; a label published with other
+   content, or a published binding that does not verify or is unsupported,
+   is POLICY_REFERENCE_CONFLICT -- a permanent integrity conflict
+   (EI4-D10-DQ6), never an eligibility refusal and never retried.
+   Generation never publishes. Then the venue-day reference, the listing
+   eligibility and
    -- as of the modeled issuance, which is the decision instant plus the
    timing policy's versioned latency (EI4-D9-C) -- the issued-history record.
    It must be complete through that instant and states its recording
@@ -77,9 +89,13 @@ do not exist, and a proposal names them as blocking actionable issuance.
 Failure semantics
 -----------------
 Expected outages of the injected ports -- the timeline store, the snapshot
-store, the synthetic reference sources and the issued-history source -- become
-DEPENDENCY_UNAVAILABLE, and so does an answer for another version, listing,
-date or session, which is never substituted. Verification failures of stored
+store, the synthetic reference sources, the policy catalog and the
+issued-history source -- become DEPENDENCY_UNAVAILABLE, and so does an answer
+for another version, listing, date or session, which is never substituted,
+and a policy-reference conflict, under its own reason. Every policy-catalog
+failure happens while gathering, so it has no inputs and no generation key:
+the attempt is attempt-only, and no disposition is ever formed from
+contradictory policy content. Verification failures of stored
 history become RESEARCH_INTEGRITY_FAILURE. Programming errors -- a wrong
 argument type, an unexpected exception -- raise and produce no audit.
 Identical inputs and stored history always give an identical assessment: the
@@ -122,6 +138,9 @@ from northstar_application.application_services.equity_recommendation_generation
     InvalidEquityRecommendationEvidenceError,
     equity_modeled_issuance,
 )
+from northstar_application.application_services.equity_synthetic_policy_bindings import (
+    EquitySyntheticPolicyType,
+)
 from northstar_application.application_services.equity_trade_recommendation_eligibility import (
     EQUITY_CORE_UNRESOLVED_REASONS,
     EQUITY_RECOMMENDATION_UNASSESSED_CONTROLS,
@@ -137,6 +156,10 @@ from northstar_application.application_services.equity_trade_recommendation_elig
 )
 from northstar_application.application_services.schedule_equity_intraday_research import (
     EquityIntradayResearchTimelineIdentity,
+)
+from northstar_application.application_services.verify_equity_synthetic_policy_bindings import (
+    EquitySyntheticPolicyBindingVerdict,
+    verify_equity_synthetic_policy_set,
 )
 from northstar_application.ports.equity_candle_evidence_journal import (
     EquityCandleEvidenceSnapshotStore,
@@ -158,6 +181,7 @@ from northstar_application.ports.equity_recommendation_references import (
     EquitySyntheticEntryTimingPolicy,
     EquitySyntheticListingEligibility,
     EquitySyntheticListingEligibilitySource,
+    EquitySyntheticPolicyReferenceConflictError,
     EquitySyntheticRecommendationReferenceSource,
     EquitySyntheticReferenceUnavailableError,
 )
@@ -166,8 +190,23 @@ from northstar_application.ports.equity_research_window_reference import (
     EquityVenueDayReference,
     EquityVenueDayReferenceSource,
 )
+from northstar_application.ports.equity_synthetic_policy_catalog_store import (
+    EquitySyntheticPolicyCatalogStore,
+)
 
 _R = EquityRecommendationEligibilityReason
+_T = EquitySyntheticPolicyType
+_VERDICT = EquitySyntheticPolicyBindingVerdict
+# The reason for a policy identity that is not published, or that the catalog
+# cannot answer: the existing "not held" reasons, POLICY_SET_UNAVAILABLE for a set.
+_ABSENT = {
+    _T.GENERATION_POLICY: _R.GENERATION_POLICY_UNAVAILABLE,
+    _T.RISK_POLICY: _R.RISK_POLICY_UNAVAILABLE,
+    _T.COST_SCHEDULE: _R.COST_SCHEDULE_UNAVAILABLE,
+    _T.PRICE_INCREMENT: _R.PRICE_INCREMENT_UNAVAILABLE,
+    _T.TIMING_POLICY: _R.TIMING_POLICY_UNAVAILABLE,
+    _T.POLICY_SET: _R.POLICY_SET_UNAVAILABLE,
+}
 _CHECK = EquityRecommendationCheck
 _STATUS = EquityRecommendationCheckStatus
 _UNANSWERED_DAYS = frozenset(
@@ -257,7 +296,14 @@ class _Candidate:
 
 
 class GenerateEquityTradeRecommendationUseCase:
-    """Evaluates one authoritative research candidate into a synthetic proposal or refusal."""
+    """Evaluates one authoritative research candidate into a synthetic proposal or refusal.
+
+    ``policy_catalog`` is the authoritative published-policy catalog
+    (EI4-D10). It is required: there is no default, in-memory fallback or
+    generation without it, and generation only reads it -- it never
+    publishes. ``references`` still answers each component by its label; the
+    catalog then decides whether that answer is the published definition.
+    """
 
     def __init__(
         self,
@@ -267,6 +313,7 @@ class GenerateEquityTradeRecommendationUseCase:
         references: EquitySyntheticRecommendationReferenceSource,
         listing_eligibility: EquitySyntheticListingEligibilitySource,
         session_history: EquitySessionRecommendationHistorySource,
+        policy_catalog: EquitySyntheticPolicyCatalogStore,
     ) -> None:
         for value, kind, name in (
             (timelines, EquityIntradayResearchTimelineStore, "timelines"),
@@ -275,6 +322,7 @@ class GenerateEquityTradeRecommendationUseCase:
             (references, EquitySyntheticRecommendationReferenceSource, "references"),
             (listing_eligibility, EquitySyntheticListingEligibilitySource, "listing_eligibility"),
             (session_history, EquitySessionRecommendationHistorySource, "session_history"),
+            (policy_catalog, EquitySyntheticPolicyCatalogStore, "policy_catalog"),
         ):
             if not isinstance(value, kind):
                 raise TypeError(f"{name} must be an {kind.__name__}.")
@@ -284,6 +332,7 @@ class GenerateEquityTradeRecommendationUseCase:
         self._references = references
         self._eligibility = listing_eligibility
         self._history = session_history
+        self._catalog = policy_catalog
 
     def execute(
         self, request: EquityTradeRecommendationRequest
@@ -348,6 +397,9 @@ class GenerateEquityTradeRecommendationUseCase:
             except EquitySyntheticReferenceUnavailableError as exc:
                 found.append((missing, f"The {label} source is unavailable: {exc}."))
                 return None
+            except EquitySyntheticPolicyReferenceConflictError as exc:
+                found.append((_R.POLICY_REFERENCE_CONFLICT, f"The {label} {version}: {exc}"))
+                return None
             if value is None:
                 found.append((missing, f"No {label} {version} is held."))
                 return None
@@ -393,6 +445,18 @@ class GenerateEquityTradeRecommendationUseCase:
             EquityPriceIncrement,
             lambda: sources.price_increment(policy.price_increment_version, listing, day),
         )
+        resolved = None
+        components = (generation, risk, costs, increment, timing)
+        if all(component is not None for component in components):
+            resolved = EquityResolvedSyntheticPolicySet(
+                reference=policy,
+                generation_policy=generation,  # type: ignore[arg-type]
+                risk_policy=risk,  # type: ignore[arg-type]
+                cost_schedule=costs,  # type: ignore[arg-type]
+                price_increment=increment,  # type: ignore[arg-type]
+                timing_policy=timing,  # type: ignore[arg-type]
+            )
+            self._published(resolved, found)
         venue = self._venue_day(request, candidate, found)
         eligibility = self._listing_reference(request, found)
         history = None
@@ -403,21 +467,28 @@ class GenerateEquityTradeRecommendationUseCase:
             history = self._session_history(request, as_of, found)
         if found:
             return _collect(found)
-        assert isinstance(timing, EquitySyntheticEntryTimingPolicy) and history is not None
+        assert resolved is not None and history is not None
         return EquityRecommendationInputs(
             candidate=candidate,
-            policy_set=EquityResolvedSyntheticPolicySet(
-                reference=policy,
-                generation_policy=generation,  # type: ignore[arg-type]
-                risk_policy=risk,  # type: ignore[arg-type]
-                cost_schedule=costs,  # type: ignore[arg-type]
-                price_increment=increment,  # type: ignore[arg-type]
-                timing_policy=timing,
-            ),
+            policy_set=resolved,
             listing_eligibility=eligibility,  # type: ignore[arg-type]
             venue_day=venue,  # type: ignore[arg-type]
             issued_history=history,
         )
+
+    def _published(self, resolved: EquityResolvedSyntheticPolicySet, found: _Found) -> None:
+        """Require every binding of ``resolved`` to be published with exactly its content.
+
+        The catalog is the authority: whatever the reference source answered,
+        generation continues only with the published definitions. Each
+        identity is read once; nothing is published, defaulted or retried.
+        """
+        verification = verify_equity_synthetic_policy_set(self._catalog, resolved)
+        for check in verification.failed:
+            if check.verdict in (_VERDICT.NOT_PUBLISHED, _VERDICT.UNAVAILABLE):
+                found.append((_ABSENT[check.identity.policy_type], check.detail))
+            else:  # CONFLICT, INVALID or INCOMPATIBLE: ADR-022 section 8, cases B and D
+                found.append((_R.POLICY_REFERENCE_CONFLICT, f"{check.verdict}: {check.detail}"))
 
     def _venue_day(
         self,
