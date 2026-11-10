@@ -73,8 +73,9 @@ once, authoritatively:
   COMMIT_RECONCILIATION_UNRESOLVED. Nothing is claimed either way.
 
 Attempt-only results -- integrity failures, outages, no candidate, and early
-refusals with no generation identity -- are recorded with ``record_attempt``
-and reconciled the same way, by reloading their attempt identity. The
+refusals with no generation identity -- are recorded with this recorder's
+``record_attempt``, which writes through the port's ``write_attempt``, and
+reconciled the same way, by reloading their attempt identity. The
 absence of a disposition is never evidence about an attempt. A stored record
 that does not construct is never authoritative: met during a write -- of a
 disposition or of an attempt alone -- it is STORED_RECORD_INVALID, or

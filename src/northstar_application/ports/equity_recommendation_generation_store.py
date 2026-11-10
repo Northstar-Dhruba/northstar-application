@@ -24,8 +24,20 @@ Operations
 ``load_disposition(key)`` and ``load_attempt(identity)`` return the committed
 record, or None when none was committed.
 
-``record_generation(disposition, attempt)`` is ONE atomic operation (EI4-D9-E).
-In one transaction, holding the write lock before reading, the implementation:
+Writes take a recorder-issued authorization (EI4-D11, ADR-023): a
+VerifiedEquityRecommendationGenerationWrite or a
+VerifiedEquityRecommendationAttemptWrite
+(equity_recommendation_generation_write_authorization). The implementation
+validates it with the matching public ``require_verified_*`` validator before
+anything is opened or written, and persists exactly the content the validated
+authorization covers. An authorization that is missing, of the wrong type,
+not issued by the verified recorder, or whose content differs from what it
+covers is refused with UnverifiedEquityRecommendationGenerationWriteError;
+nothing is written.
+
+``write_generation(authorization)`` is ONE atomic operation (EI4-D9-E) over
+the disposition and attempt the authorization covers. In one transaction,
+holding the write lock before reading, the implementation:
 
 1. reads the disposition stored under ``disposition.generation_key``;
 2. none stored: inserts the disposition, its proposal when it has one, and
@@ -47,9 +59,10 @@ must compare it explicitly.
 Uniqueness of the generation key and of the attempt identity is enforced by
 the database, not by in-memory checks (EI4-D9-F).
 
-``record_attempt(attempt)`` records an attempt-only result -- one with no
-disposition -- inserting it unless the identity is already stored: COMMITTED
-or EQUIVALENT. It never creates a disposition.
+``write_attempt(authorization)`` records the attempt-only result -- one with
+no disposition -- that the authorization covers, inserting it unless the
+identity is already stored: COMMITTED or EQUIVALENT. It never creates a
+disposition.
 
 Outcomes and failures
 ---------------------
@@ -74,24 +87,19 @@ Read and authorized-write ports (EI4-D11, ADR-023)
 policy-binding audit depend on it alone.
 
 ``EquityRecommendationGenerationRecordWriter`` is the authorized-write port:
-``write_generation(authorization)`` and ``write_attempt(authorization)`` take a
-recorder-issued VerifiedEquityRecommendationGenerationWrite or
-VerifiedEquityRecommendationAttemptWrite
-(equity_recommendation_generation_write_authorization) and persist exactly
-the content it covers, with the transaction, outcomes and typed errors of
-``record_generation`` and ``record_attempt`` above. An authorization that is
-missing, of the wrong type, not issued by the verified recorder, or whose
-content differs from what it covers is refused with
-UnverifiedEquityRecommendationGenerationWriteError before anything is written.
+``write_generation`` and ``write_attempt`` above, both abstract. The verified
+recorder (RecordEquityRecommendationGenerationUseCase) is the only supported
+caller and the only issuer of authorizations.
 
-**Transitional compatibility (EI4-D11-W1).** ``EquityRecommendationGenerationStore``
-keeps its four abstract methods unchanged. Its ``write_generation`` and
-``write_attempt`` are concrete defaults: they validate the authorization
-first, then delegate through dynamic dispatch to ``self.record_generation``
-and ``self.record_attempt``. They are a migration compatibility mechanism,
-not enforcement: until the Infrastructure adapter refuses raw writes (W2-I),
-a direct ``record_*`` call still writes. The raw ``record_*`` signatures are
-removed from this port later (W3).
+``EquityRecommendationGenerationStore`` is the combined port: exactly the
+reader and the authorized writer, adding nothing. Its abstract operations are
+``load_disposition``, ``load_attempt``, ``write_generation`` and
+``write_attempt``; an implementation supplies all four explicitly. The port
+has no raw write taking unverified records and no concrete write default
+(EI4-D11-W3): an implementation that supplies only reads, or only raw
+writes, cannot be instantiated. The boundary prevents unsupported ordinary
+writes; it is not tamper-proof against privileged code or direct database
+access (ADR-023).
 """
 
 from __future__ import annotations
@@ -153,7 +161,7 @@ class EquityRecommendationStoreWrite:
 
     ``stored`` is None for COMMITTED (the offered disposition is now stored)
     and for every attempt-only write; it is the disposition already stored for
-    EQUIVALENT and CONFLICT on ``record_generation``. ``attempt_inserted`` is
+    EQUIVALENT and CONFLICT on ``write_generation``. ``attempt_inserted`` is
     False when an attempt with the same identity was already stored -- the
     attempt is durably recorded either way.
     """
@@ -210,50 +218,6 @@ class EquityRecommendationGenerationStore(
 ):
     """Durable, insert-only store of generation dispositions and logical attempts.
 
-    The transitional combined port (EI4-D11-W1): its four abstract methods are
-    unchanged, and its authorized writes are concrete compatibility defaults.
+    Exactly the read port and the authorized-write port: every operation is
+    abstract and inherited, so an implementation supplies all four itself.
     """
-
-    def write_generation(
-        self, authorization: VerifiedEquityRecommendationGenerationWrite
-    ) -> EquityRecommendationStoreWrite:
-        """Validate ``authorization``, then delegate to ``self.record_generation``.
-
-        Transitional compatibility (EI4-D11-W1): validation runs before any
-        delegation, so an unauthorized write reaches no store. Delegation is
-        dynamic, so an implementation's own ``record_generation`` runs.
-        """
-        from northstar_application.application_services.equity_recommendation_generation_write_authorization import (  # noqa: E501, PLC0415
-            require_verified_equity_recommendation_generation_write,
-        )
-
-        verified = require_verified_equity_recommendation_generation_write(authorization)
-        return self.record_generation(verified.disposition, verified.attempt)
-
-    def write_attempt(
-        self, authorization: VerifiedEquityRecommendationAttemptWrite
-    ) -> EquityRecommendationStoreWrite:
-        """Validate ``authorization``, then delegate to ``self.record_attempt``.
-
-        Transitional compatibility (EI4-D11-W1), as ``write_generation``.
-        """
-        from northstar_application.application_services.equity_recommendation_generation_write_authorization import (  # noqa: E501, PLC0415
-            require_verified_equity_recommendation_attempt_write,
-        )
-
-        verified = require_verified_equity_recommendation_attempt_write(authorization)
-        return self.record_attempt(verified.attempt)
-
-    @abstractmethod
-    def record_generation(
-        self,
-        disposition: EquityRecommendationGenerationDisposition,
-        attempt: EquityRecommendationGenerationAttempt,
-    ) -> EquityRecommendationStoreWrite:
-        """Atomically record ``disposition`` (with its proposal) and ``attempt``."""
-
-    @abstractmethod
-    def record_attempt(
-        self, attempt: EquityRecommendationGenerationAttempt
-    ) -> EquityRecommendationStoreWrite:
-        """Record an attempt-only result; never a disposition."""

@@ -2,8 +2,7 @@
 
 Contract tests for the Application layer of the EI4-D11 boundary: the read
 and authorized-write ports, the recorder-issued authorizations, their exact
-content binding, the transitional compatibility defaults of the combined
-store port, and the recorder's migration to ``write_generation`` and
+content binding, and the recorder's writes through ``write_generation`` and
 ``write_attempt``.
 
 Everything is synthetic and reuses the existing helpers: the EI-4C research
@@ -15,8 +14,9 @@ already-issued authorization, it does so with ``object.__setattr__`` -- a
 labelled simulation of privileged tampering, outside the approved trust
 boundary -- to show the validator still refuses what it can detect.
 
-W1 is transitional: the legacy ``record_*`` methods still write when called
-directly, until Infrastructure W2-I. Nothing here claims otherwise.
+Since EI4-D11-W3 the store port has no raw write and no compatibility
+default; the port contract and the architecture scans are in
+test_equity_recommendation_generation_write_architecture.
 """
 
 from __future__ import annotations
@@ -52,11 +52,9 @@ from northstar_application.application_services import (
     equity_recommendation_generation_write_authorization as authorization_module,
 )
 from northstar_application.ports import (
-    EquityRecommendationGenerationNotCommittedError,
     EquityRecommendationGenerationRecordReader,
     EquityRecommendationGenerationRecordWriter,
     EquityRecommendationGenerationStore,
-    EquityRecommendationStoreWrite,
     UnverifiedEquityRecommendationGenerationWriteError,
 )
 
@@ -67,42 +65,23 @@ Attempt = EquityRecommendationGenerationAttempt
 
 
 class _Capturing(ei4d._Store):
-    """The EI-4D-A store double, recording every authorization and raw-write call.
+    """The EI-4D-A store double, recording every authorization it is offered.
 
-    ``write_*`` are the inherited compatibility defaults; the capture runs
-    before them. ``raw`` counts calls of ``record_*`` and whether each came
-    through an authorized write.
+    The capture runs before the double's own ``write_*``, which validate the
+    authorization first; ``writes`` counts only writes that passed validation.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.authorizations: list[Any] = []
-        self.raw: list[tuple[str, bool]] = []
-        self._authorized = False
 
     def write_generation(self, authorization):  # type: ignore[no-untyped-def]
         self.authorizations.append(authorization)
-        self._authorized = True
-        try:
-            return super().write_generation(authorization)
-        finally:
-            self._authorized = False
+        return super().write_generation(authorization)
 
     def write_attempt(self, authorization):  # type: ignore[no-untyped-def]
         self.authorizations.append(authorization)
-        self._authorized = True
-        try:
-            return super().write_attempt(authorization)
-        finally:
-            self._authorized = False
-
-    def record_generation(self, disposition, attempt):  # type: ignore[no-untyped-def]
-        self.raw.append(("generation", self._authorized))
-        return super().record_generation(disposition, attempt)
-
-    def record_attempt(self, attempt):  # type: ignore[no-untyped-def]
-        self.raw.append(("attempt", self._authorized))
-        return super().record_attempt(attempt)
+        return super().write_attempt(authorization)
 
 
 def _issued() -> tuple[ei4c._Ports, _Capturing, VerifiedEquityRecommendationGenerationWrite]:
@@ -140,27 +119,22 @@ def _relabelled(disposition: Disposition, **changes: Any) -> Disposition:
 
 
 # ----------------------------------------------------------------------
-# A. Port compatibility
+# A. The ports
 # ----------------------------------------------------------------------
 
 
-def test_a_the_legacy_port_keeps_exactly_its_four_abstract_methods() -> None:
+def test_a_the_combined_port_is_exactly_the_reader_and_the_authorized_writer() -> None:
     store = EquityRecommendationGenerationStore
     assert store.__abstractmethods__ == frozenset(
-        {"load_disposition", "load_attempt", "record_generation", "record_attempt"}
+        {"load_disposition", "load_attempt", "write_generation", "write_attempt"}
     )
     for name, parameters in (
         ("load_disposition", ["self", "generation_key"]),
         ("load_attempt", ["self", "attempt_identity"]),
-        ("record_generation", ["self", "disposition", "attempt"]),
-        ("record_attempt", ["self", "attempt"]),
         ("write_generation", ["self", "authorization"]),
         ("write_attempt", ["self", "authorization"]),
     ):
         assert list(inspect.signature(getattr(store, name)).parameters) == parameters, name
-    # The authorized writes are concrete compatibility defaults on the legacy port.
-    for name in ("write_generation", "write_attempt"):
-        assert not getattr(getattr(store, name), "__isabstractmethod__", False)
     assert issubclass(store, EquityRecommendationGenerationRecordReader)
     assert issubclass(store, EquityRecommendationGenerationRecordWriter)
     assert EquityRecommendationGenerationRecordReader.__abstractmethods__ == frozenset(
@@ -190,8 +164,7 @@ def test_b_a_verified_disposition_is_written_through_its_issued_authorization() 
     assert authorization.policy.checks[-1].offered_fingerprint == disposition.policy_set_fingerprint
     assert authorization.attempt.generation_key == disposition.generation_key
     assert require_verified_equity_recommendation_generation_write(authorization) is authorization
-    # Every raw write happened inside the authorized-write default, never directly.
-    assert store.raw == [("generation", True)]
+    assert store.writes == 1  # one validated write, through the issued authorization
     assert store.dispositions[disposition.generation_key] == disposition
 
 
@@ -220,7 +193,7 @@ def test_b_no_authorization_is_issued_when_a_mandatory_check_fails(failure: str)
         ports_.catalog = ei4c._Catalog()
         result = ei4d._recorder(ports_, store).record(disposition, attempt)
         assert result.outcome is _O.POLICY_REFERENCE_NOT_ESTABLISHED
-    assert store.authorizations == [] and store.raw == [] and store.writes == 0
+    assert store.authorizations == [] and store.writes == 0
 
 
 # ----------------------------------------------------------------------
@@ -360,7 +333,7 @@ def test_d_missing_foreign_and_unissued_authorizations_are_refused_before_any_wr
     ):
         with pytest.raises(_Unverified):
             store.write_attempt(candidate)
-    assert store.raw == [] and store.writes == 0 and store.attempts == {}
+    assert store.writes == 0 and store.attempts == {}
 
 
 def test_d_an_inconsistent_authorization_cannot_even_be_constructed() -> None:
@@ -401,7 +374,7 @@ def test_e_a_genuine_attempt_only_result_is_authorized_without_policy_evidence()
     attempt = equity_recommendation_attempt(audit)
     assert authorization.attempt == attempt
     assert authorization.covered == (attempt.attempt_identity, attempt.attempt_document)
-    assert store.raw == [("attempt", True)] and store.dispositions == {}
+    assert store.writes == 1 and store.dispositions == {}
     assert ports_.catalog.loads == loads  # recording consulted no policy evidence
 
 
@@ -413,7 +386,7 @@ def test_e_attempt_and_generation_authorizations_are_not_interchangeable() -> No
         store.write_generation(attempt)
     with pytest.raises(_Unverified):
         store.write_attempt(generation)
-    assert store.raw == []
+    assert store.writes == 0
 
 
 def test_e_a_fabricated_or_changed_attempt_write_is_refused() -> None:
@@ -429,48 +402,7 @@ def test_e_a_fabricated_or_changed_attempt_write_is_refused() -> None:
     _tamper(authorization, "attempt", other)
     with pytest.raises(_Unverified, match="differs"):
         store.write_attempt(authorization)
-    assert store.raw == [] and store.attempts == {}
-
-
-# ----------------------------------------------------------------------
-# F. Compatibility delegation by dynamic dispatch
-# ----------------------------------------------------------------------
-
-
-def test_f_validated_writes_delegate_to_the_instance_own_raw_methods() -> None:
-    _, _, authorization = _issued()
-    _, attempt_authorization = _issued_attempt()
-
-    class _Overriding(ei4d._Store):
-        """Like the Infrastructure ``_Paused`` race double: overrides the raw methods."""
-
-        def __init__(self) -> None:
-            super().__init__()
-            self.calls: list[str] = []
-            self.returned: list[EquityRecommendationStoreWrite] = []
-
-        def record_generation(self, disposition, attempt):  # type: ignore[no-untyped-def]
-            self.calls.append("record_generation")
-            written = super().record_generation(disposition, attempt)
-            self.returned.append(written)
-            return written
-
-        def record_attempt(self, attempt):  # type: ignore[no-untyped-def]
-            self.calls.append("record_attempt")
-            written = super().record_attempt(attempt)
-            self.returned.append(written)
-            return written
-
-    store = _Overriding()
-    first = store.write_generation(authorization)
-    second = store.write_attempt(attempt_authorization)
-    assert store.calls == ["record_generation", "record_attempt"]
-    assert store.returned == [first, second]  # the raw result, returned unchanged
-    assert store.writes == 2  # one each: no duplicate, no retry
-    store.script = ["rollback"]
-    with pytest.raises(EquityRecommendationGenerationNotCommittedError):
-        store.write_generation(authorization)  # typed errors propagate unchanged
-    assert store.writes == 3
+    assert store.writes == 0 and store.attempts == {}
 
 
 # ----------------------------------------------------------------------
@@ -524,7 +456,7 @@ def test_g_a_retry_whose_content_changed_is_refused() -> None:
     store.script = ["lost_before"]
     with pytest.raises(_Unverified):
         ei4d._recorder(ports_, store).execute(audit)
-    assert store.raw == [("generation", True)]  # only the first, authorized write reached it
+    assert store.writes == 1  # only the first, valid write passed validation
     assert store.dispositions == {}
 
 

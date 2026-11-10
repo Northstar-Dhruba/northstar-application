@@ -77,7 +77,7 @@ from northstar_application.application_services import (
     publish_equity_synthetic_policies as publish_module,
 )
 from northstar_application.ports import (
-    EquityRecommendationGenerationStore,
+    EquityRecommendationGenerationRecordReader,
     EquityRecommendationGenerationStoreUnavailableError,
     EquitySyntheticPolicyCatalogOutcome,
     EquitySyntheticPolicyCatalogUnavailableError,
@@ -719,8 +719,8 @@ def test_a_resolver_conflict_is_the_generation_reason_policy_reference_conflict(
 # ----------------------------------------------------------------------
 
 
-class _Records(EquityRecommendationGenerationStore):
-    """Read-only test double of the generation store; any write is a test failure."""
+class _Records(EquityRecommendationGenerationRecordReader):
+    """Read-only test double of generation records: it has no write method at all."""
 
     def __init__(self, *dispositions: EquityRecommendationGenerationDisposition) -> None:
         self.held = {d.generation_key: d for d in dispositions}
@@ -733,12 +733,6 @@ class _Records(EquityRecommendationGenerationStore):
 
     def load_attempt(self, attempt_identity: str):  # type: ignore[no-untyped-def]
         raise AssertionError("the audit reads dispositions only")
-
-    def record_generation(self, disposition, attempt):  # type: ignore[no-untyped-def]
-        raise AssertionError("the audit never writes")
-
-    def record_attempt(self, attempt):  # type: ignore[no-untyped-def]
-        raise AssertionError("the audit never writes")
 
 
 class _History(EquitySyntheticPolicyPublicationHistory):
@@ -1018,4 +1012,11 @@ def test_no_sqlite_infrastructure_clock_retry_loop_or_issuance(module) -> None: 
     calls = {
         getattr(node.func, "attr", None) for node in ast.walk(tree) if isinstance(node, ast.Call)
     }
-    assert not calls & {"sleep", "record_generation", "record_attempt", "issue"}
+    assert not calls & {
+        "sleep",
+        "record_generation",
+        "record_attempt",
+        "write_generation",
+        "write_attempt",
+        "issue",
+    }
