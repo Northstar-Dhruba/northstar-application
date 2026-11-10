@@ -25,11 +25,14 @@ from northstar_application.ports.equity_intraday_research_timeline_store import 
 from northstar_application.ports.equity_recommendation_generation_store import (
     EquityRecommendationGenerationCommitUnconfirmedError,
     EquityRecommendationGenerationNotCommittedError,
+    EquityRecommendationGenerationRecordReader,
+    EquityRecommendationGenerationRecordWriter,
     EquityRecommendationGenerationStore,
     EquityRecommendationGenerationStoreUnavailableError,
     EquityRecommendationStoreOutcome,
     EquityRecommendationStoreWrite,
     InvalidEquityRecommendationStoreWriteError,
+    UnverifiedEquityRecommendationGenerationWriteError,
 )
 from northstar_application.ports.equity_recommendation_references import (
     EquityPriorSessionRecommendation,
@@ -290,6 +293,9 @@ __all__ = [
     "EquityRecommendationGenerationCommitUnconfirmedError",
     "EquityRecommendationGenerationNotCommittedError",
     "EquityRecommendationGenerationStore",
+    "EquityRecommendationGenerationRecordReader",
+    "EquityRecommendationGenerationRecordWriter",
+    "UnverifiedEquityRecommendationGenerationWriteError",
     "EquityRecommendationGenerationStoreUnavailableError",
     "EquityRecommendationStoreOutcome",
     "EquityRecommendationStoreWrite",

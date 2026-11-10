@@ -281,6 +281,12 @@ from northstar_application.application_services.equity_recommendation_generation
     equity_recommendation_disposition,
     equity_recommendation_disposition_kind,
 )
+from northstar_application.application_services.equity_recommendation_generation_write_authorization import (  # noqa: E501
+    VerifiedEquityRecommendationAttemptWrite,
+    VerifiedEquityRecommendationGenerationWrite,
+    require_verified_equity_recommendation_attempt_write,
+    require_verified_equity_recommendation_generation_write,
+)
 from northstar_application.application_services.equity_research_window import (
     NSE_EQUITY_INTRADAY_V1_RESEARCH_WINDOW,
     EquityResearchWindowEvaluation,
@@ -1026,4 +1032,8 @@ __all__ = [
     "EquitySyntheticPolicyBindingVerdict",
     "EquitySyntheticPolicySetVerification",
     "verify_equity_synthetic_policy_set",
+    "VerifiedEquityRecommendationAttemptWrite",
+    "VerifiedEquityRecommendationGenerationWrite",
+    "require_verified_equity_recommendation_attempt_write",
+    "require_verified_equity_recommendation_generation_write",
 ]

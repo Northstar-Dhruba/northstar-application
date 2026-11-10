@@ -66,6 +66,32 @@ A returned EquityRecommendationStoreWrite means the transaction committed.
 
 The implementation never retries by itself, reads no clock and calls no
 provider, broker or network.
+
+Read and authorized-write ports (EI4-D11, ADR-023)
+--------------------------------------------------
+``EquityRecommendationGenerationRecordReader`` is the read-only port:
+``load_disposition`` and ``load_attempt``. Historical verification and the
+policy-binding audit depend on it alone.
+
+``EquityRecommendationGenerationRecordWriter`` is the authorized-write port:
+``write_generation(authorization)`` and ``write_attempt(authorization)`` take a
+recorder-issued VerifiedEquityRecommendationGenerationWrite or
+VerifiedEquityRecommendationAttemptWrite
+(equity_recommendation_generation_write_authorization) and persist exactly
+the content it covers, with the transaction, outcomes and typed errors of
+``record_generation`` and ``record_attempt`` above. An authorization that is
+missing, of the wrong type, not issued by the verified recorder, or whose
+content differs from what it covers is refused with
+UnverifiedEquityRecommendationGenerationWriteError before anything is written.
+
+**Transitional compatibility (EI4-D11-W1).** ``EquityRecommendationGenerationStore``
+keeps its four abstract methods unchanged. Its ``write_generation`` and
+``write_attempt`` are concrete defaults: they validate the authorization
+first, then delegate through dynamic dispatch to ``self.record_generation``
+and ``self.record_attempt``. They are a migration compatibility mechanism,
+not enforcement: until the Infrastructure adapter refuses raw writes (W2-I),
+a direct ``record_*`` call still writes. The raw ``record_*`` signatures are
+removed from this port later (W3).
 """
 
 from __future__ import annotations
@@ -79,6 +105,10 @@ if TYPE_CHECKING:
     from northstar_application.application_services.equity_recommendation_generation_records import (  # noqa: E501
         EquityRecommendationGenerationAttempt,
         EquityRecommendationGenerationDisposition,
+    )
+    from northstar_application.application_services.equity_recommendation_generation_write_authorization import (  # noqa: E501
+        VerifiedEquityRecommendationAttemptWrite,
+        VerifiedEquityRecommendationGenerationWrite,
     )
 
 
@@ -104,6 +134,16 @@ class EquityRecommendationStoreOutcome(StrEnum):
 
 class InvalidEquityRecommendationStoreWriteError(ValueError):
     """Raised when a store reports a write that its contract does not allow."""
+
+
+class UnverifiedEquityRecommendationGenerationWriteError(ValueError):
+    """Raised when a generation write is not authorized by the verified recorder (EI4-D11).
+
+    The authorization is missing, of the wrong type, was not issued by the
+    verified recorder, or covers other content than offered. Nothing is
+    written. No supported caller can produce it: it is a programming error,
+    never a recording outcome.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,8 +175,8 @@ class EquityRecommendationStoreWrite:
             )
 
 
-class EquityRecommendationGenerationStore(ABC):
-    """Durable, insert-only store of generation dispositions and logical attempts."""
+class EquityRecommendationGenerationRecordReader(ABC):
+    """Read-only access to committed generation dispositions and logical attempts."""
 
     @abstractmethod
     def load_disposition(
@@ -147,6 +187,62 @@ class EquityRecommendationGenerationStore(ABC):
     @abstractmethod
     def load_attempt(self, attempt_identity: str) -> EquityRecommendationGenerationAttempt | None:
         """Return the committed attempt with ``attempt_identity``, or None."""
+
+
+class EquityRecommendationGenerationRecordWriter(ABC):
+    """Authorized writes of generation records: only recorder-issued authorizations."""
+
+    @abstractmethod
+    def write_generation(
+        self, authorization: VerifiedEquityRecommendationGenerationWrite
+    ) -> EquityRecommendationStoreWrite:
+        """Atomically record exactly the disposition and attempt ``authorization`` covers."""
+
+    @abstractmethod
+    def write_attempt(
+        self, authorization: VerifiedEquityRecommendationAttemptWrite
+    ) -> EquityRecommendationStoreWrite:
+        """Record exactly the attempt-only result ``authorization`` covers."""
+
+
+class EquityRecommendationGenerationStore(
+    EquityRecommendationGenerationRecordReader, EquityRecommendationGenerationRecordWriter
+):
+    """Durable, insert-only store of generation dispositions and logical attempts.
+
+    The transitional combined port (EI4-D11-W1): its four abstract methods are
+    unchanged, and its authorized writes are concrete compatibility defaults.
+    """
+
+    def write_generation(
+        self, authorization: VerifiedEquityRecommendationGenerationWrite
+    ) -> EquityRecommendationStoreWrite:
+        """Validate ``authorization``, then delegate to ``self.record_generation``.
+
+        Transitional compatibility (EI4-D11-W1): validation runs before any
+        delegation, so an unauthorized write reaches no store. Delegation is
+        dynamic, so an implementation's own ``record_generation`` runs.
+        """
+        from northstar_application.application_services.equity_recommendation_generation_write_authorization import (  # noqa: E501, PLC0415
+            require_verified_equity_recommendation_generation_write,
+        )
+
+        verified = require_verified_equity_recommendation_generation_write(authorization)
+        return self.record_generation(verified.disposition, verified.attempt)
+
+    def write_attempt(
+        self, authorization: VerifiedEquityRecommendationAttemptWrite
+    ) -> EquityRecommendationStoreWrite:
+        """Validate ``authorization``, then delegate to ``self.record_attempt``.
+
+        Transitional compatibility (EI4-D11-W1), as ``write_generation``.
+        """
+        from northstar_application.application_services.equity_recommendation_generation_write_authorization import (  # noqa: E501, PLC0415
+            require_verified_equity_recommendation_attempt_write,
+        )
+
+        verified = require_verified_equity_recommendation_attempt_write(authorization)
+        return self.record_attempt(verified.attempt)
 
     @abstractmethod
     def record_generation(
