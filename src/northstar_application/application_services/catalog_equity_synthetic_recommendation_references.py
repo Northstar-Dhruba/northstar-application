@@ -25,10 +25,10 @@ listing-specific or NSE tick-size rule is applied or inferred.
 Scope
 -----
 This is an additional implementation of the existing port. The EI-4C generator
-is not rewired to require it, and it does not yet map
-EquitySyntheticPolicyReferenceConflictError to a generation reason: both are
-the S3 slice. Until then, a conflict raised here propagates out of generation,
-and nothing is produced.
+maps EquitySyntheticPolicyReferenceConflictError to the generation reason
+POLICY_REFERENCE_CONFLICT (EI4-D10-S3), and -- whatever reference source it is
+given -- separately requires the resolved set to be published in the catalog
+(verify_equity_synthetic_policy_bindings).
 """
 
 from __future__ import annotations

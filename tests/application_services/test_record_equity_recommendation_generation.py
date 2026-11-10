@@ -230,7 +230,9 @@ def _verifier(ports_: ei4c._Ports) -> EquityRecommendationGenerationVerifier:
 def _recorder(
     ports_: ei4c._Ports, store: _Store, max_writes: int = 3
 ) -> RecordEquityRecommendationGenerationUseCase:
-    return RecordEquityRecommendationGenerationUseCase(store, _verifier(ports_), max_writes)
+    return RecordEquityRecommendationGenerationUseCase(
+        store, _verifier(ports_), ports_.catalog, max_writes
+    )
 
 
 def _unresolved(ports_: ei4c._Ports) -> EquityRecommendationEligibilityAudit:

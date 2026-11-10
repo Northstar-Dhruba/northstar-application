@@ -595,6 +595,12 @@ from northstar_application.application_services.verify_equity_recommendation_gen
     EquityVerifiedRecommendationGeneration,
     VerifyStoredEquityRecommendationGenerationUseCase,
 )
+from northstar_application.application_services.verify_equity_synthetic_policy_bindings import (  # noqa: E501
+    EquitySyntheticPolicyBindingCheck,
+    EquitySyntheticPolicyBindingVerdict,
+    EquitySyntheticPolicySetVerification,
+    verify_equity_synthetic_policy_set,
+)
 
 __all__ = [
     "EQUITY_CANDLE_PAYLOAD_FINGERPRINT_PREFIX",
@@ -1016,4 +1022,8 @@ __all__ = [
     "EquitySyntheticPolicyPublicationResult",
     "PublishEquitySyntheticPoliciesUseCase",
     "EQUITY_SYNTHETIC_POLICY_DEFINITION_FORMAT",
+    "EquitySyntheticPolicyBindingCheck",
+    "EquitySyntheticPolicyBindingVerdict",
+    "EquitySyntheticPolicySetVerification",
+    "verify_equity_synthetic_policy_set",
 ]

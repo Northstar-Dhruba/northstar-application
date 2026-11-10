@@ -12,10 +12,31 @@ Recording a disposition
 1. The audit's deterministic logical attempt and -- when a generation identity
    was established -- its disposition are built; both verify their own
    documents on construction.
-2. The disposition is verified before anything is written: its original
+2. The EI4-D10 recording gate (ADR-022 section 7, layer E) checks the
+   disposition's frozen policy set against the immutable policy catalog,
+   independently of how the disposition was built: its five component
+   bindings and its POLICY_SET binding must each be published with exactly
+   the frozen canonical content and fingerprint
+   (verify_equity_synthetic_policy_bindings). Otherwise nothing is written
+   and the attempt is reported not recorded (False):
+
+   - POLICY_REFERENCE_CONFLICT: a label is published with other content, or
+     its published binding does not verify or is unsupported -- permanent,
+     never retried;
+   - POLICY_REFERENCE_NOT_ESTABLISHED: a label is not published. Recording
+     never publishes it;
+   - POLICY_REFERENCE_UNAVAILABLE: the catalog cannot answer. Fail closed.
+
+   ``policy_verification`` on the result keeps the typed verdict of each of
+   the six identities. The gate applies to every disposition, including one
+   equal to a disposition already stored: recording is a write request and
+   never certifies a record's policy publication. Historical replay and
+   read-only verification never consult the catalog. The gate does not stop
+   a direct write through a storage adapter; that boundary is EI4-D11's.
+3. The disposition is verified before anything is written: its original
    CANDIDATE and EI-2B snapshot through EI-3C, and its assessment by replay
    from its frozen inputs (EquityRecommendationGenerationVerifier).
-3. ``record_generation`` writes the disposition, its proposal and the attempt
+4. ``record_generation`` writes the disposition, its proposal and the attempt
    as ONE atomic port operation, and its committed outcome is interpreted:
 
    - COMMITTED: this write recorded the disposition;
@@ -85,6 +106,11 @@ from northstar_application.application_services.verify_equity_recommendation_gen
     EquityRecommendationSourceUnavailableError,
     EquityRecommendationSourceVerificationError,
 )
+from northstar_application.application_services.verify_equity_synthetic_policy_bindings import (
+    EquitySyntheticPolicyBindingVerdict,
+    EquitySyntheticPolicySetVerification,
+    verify_equity_synthetic_policy_set,
+)
 from northstar_application.ports.equity_recommendation_generation_store import (
     EquityRecommendationGenerationCommitUnconfirmedError,
     EquityRecommendationGenerationNotCommittedError,
@@ -92,6 +118,9 @@ from northstar_application.ports.equity_recommendation_generation_store import (
     EquityRecommendationGenerationStoreUnavailableError,
     EquityRecommendationStoreOutcome,
     EquityRecommendationStoreWrite,
+)
+from northstar_application.ports.equity_synthetic_policy_catalog_store import (
+    EquitySyntheticPolicyCatalogStore,
 )
 
 EQUITY_RECOMMENDATION_RECORD_WRITES = 3
@@ -113,10 +142,25 @@ class EquityRecommendationRecordingOutcome(StrEnum):
     SOURCE_EVIDENCE_INVALID = "SOURCE_EVIDENCE_INVALID"
     SOURCE_EVIDENCE_UNAVAILABLE = "SOURCE_EVIDENCE_UNAVAILABLE"
     REPLAY_MISMATCH = "REPLAY_MISMATCH"
+    # The EI4-D10 recording gate (ADR-022 sections 7 and 8): nothing is written.
+    POLICY_REFERENCE_CONFLICT = "POLICY_REFERENCE_CONFLICT"
+    POLICY_REFERENCE_NOT_ESTABLISHED = "POLICY_REFERENCE_NOT_ESTABLISHED"
+    POLICY_REFERENCE_UNAVAILABLE = "POLICY_REFERENCE_UNAVAILABLE"
 
 
 _O = EquityRecommendationRecordingOutcome
+_V = EquitySyntheticPolicyBindingVerdict
 _STORED = frozenset({_O.COMMITTED, _O.EQUIVALENT_COMMITTED})
+# The recording-gate outcome of a policy-set verification verdict. A binding
+# that does not verify or is unsupported is the permanent conflict at the gate
+# (ADR-022 section 8, case D); the result's policy_verification keeps which.
+_GATE = {
+    _V.CONFLICT: _O.POLICY_REFERENCE_CONFLICT,
+    _V.INVALID: _O.POLICY_REFERENCE_CONFLICT,
+    _V.INCOMPATIBLE: _O.POLICY_REFERENCE_CONFLICT,
+    _V.UNAVAILABLE: _O.POLICY_REFERENCE_UNAVAILABLE,
+    _V.NOT_PUBLISHED: _O.POLICY_REFERENCE_NOT_ESTABLISHED,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,7 +174,11 @@ class EquityRecommendationRecordingResult:
     logical attempt is durably stored (newly or already), False when it is
     known not to be, and None when that is unknown. ``writes`` counts the write
     calls made; ``reconciled`` says whether an unconfirmed commit was
-    reconciled by reload.
+    reconciled by reload. ``policy_verification`` is the recording gate's
+    catalog verification of the disposition's frozen policy set: present
+    whenever the gate ran, and the machine-readable reason for a
+    POLICY_REFERENCE_* refusal -- including whether a conflicting binding
+    was a valid other definition, did not verify, or was unsupported.
     """
 
     outcome: EquityRecommendationRecordingOutcome
@@ -141,10 +189,21 @@ class EquityRecommendationRecordingResult:
     reconciled: bool
     writes: int
     detail: str
+    policy_verification: EquitySyntheticPolicySetVerification | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.outcome, EquityRecommendationRecordingOutcome):
             raise ValueError("outcome must be an EquityRecommendationRecordingOutcome.")
+        if self.policy_verification is not None and not isinstance(
+            self.policy_verification, EquitySyntheticPolicySetVerification
+        ):
+            raise ValueError("policy_verification must be an EquitySyntheticPolicySetVerification.")
+        if self.outcome in _GATE.values() and (
+            self.policy_verification is None
+            or self.policy_verification.is_verified
+            or self.writes != 0
+        ):
+            raise ValueError("A policy-reference refusal is a failed verification with no write.")
         if self.outcome in _STORED and self.attempt_recorded is False:
             raise ValueError("A stored outcome cannot have an unrecorded attempt.")
         if (
@@ -164,22 +223,31 @@ _Result = Callable[..., EquityRecommendationRecordingResult]
 
 
 class RecordEquityRecommendationGenerationUseCase:
-    """Records a generation audit's verified disposition and logical attempt."""
+    """Records a generation audit's verified disposition and logical attempt.
+
+    ``policy_catalog`` is the authoritative published-policy catalog that the
+    recording gate reads (EI4-D10). It is required: no disposition can be
+    recorded without it, and recording never publishes.
+    """
 
     def __init__(
         self,
         store: EquityRecommendationGenerationStore,
         verifier: EquityRecommendationGenerationVerifier,
+        policy_catalog: EquitySyntheticPolicyCatalogStore,
         max_writes: int = EQUITY_RECOMMENDATION_RECORD_WRITES,
     ) -> None:
         if not isinstance(store, EquityRecommendationGenerationStore):
             raise TypeError("store must be an EquityRecommendationGenerationStore.")
         if not isinstance(verifier, EquityRecommendationGenerationVerifier):
             raise TypeError("verifier must be an EquityRecommendationGenerationVerifier.")
+        if not isinstance(policy_catalog, EquitySyntheticPolicyCatalogStore):
+            raise TypeError("policy_catalog must be an EquitySyntheticPolicyCatalogStore.")
         if isinstance(max_writes, bool) or not isinstance(max_writes, int) or max_writes < 1:
             raise ValueError("max_writes must be an integer of at least 1.")
         self._store = store
         self._verifier = verifier
+        self._catalog = policy_catalog
         self._max_writes = max_writes
 
     def execute(
@@ -233,6 +301,17 @@ class RecordEquityRecommendationGenerationUseCase:
                 reconciled,
                 writes,
                 detail,
+                policy,
+            )
+
+        # The EI4-D10 recording gate, before anything else and before any write:
+        # the frozen policy content must be exactly what the catalog publishes.
+        policy = verify_equity_synthetic_policy_set(self._catalog, disposition.inputs.policy_set)
+        if not policy.is_verified:
+            return result(
+                _GATE[policy.verdict],
+                f"Not written: the frozen policy set is not established by the policy "
+                f"catalog ({policy.verdict.value}). {policy.describe()}",
             )
 
         refused = self._verified(disposition)

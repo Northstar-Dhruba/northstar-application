@@ -20,7 +20,6 @@ import dataclasses
 import hashlib
 import inspect
 import json
-from collections.abc import Callable
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
@@ -80,10 +79,7 @@ from northstar_application.application_services import (
 from northstar_application.ports import (
     EquityRecommendationGenerationStore,
     EquityRecommendationGenerationStoreUnavailableError,
-    EquitySyntheticPolicyCatalogCommitUnconfirmedError,
-    EquitySyntheticPolicyCatalogNotCommittedError,
     EquitySyntheticPolicyCatalogOutcome,
-    EquitySyntheticPolicyCatalogStore,
     EquitySyntheticPolicyCatalogUnavailableError,
     EquitySyntheticPolicyCatalogWrite,
     EquitySyntheticPolicyPublicationHistory,
@@ -133,98 +129,9 @@ def _relabelled_timing_bundle() -> EquitySyntheticPolicyBundle:
     return _bundle(timing=ei4c._timing_policy(latency=timedelta(minutes=4)))
 
 
-class _Catalog(EquitySyntheticPolicyCatalogStore):
-    """Deterministic test double of the catalog port; stores canonical text only."""
-
-    def __init__(self) -> None:
-        self.definitions: dict[EquitySyntheticPolicyBindingIdentity, tuple[str, str]] = {}
-        self.sets: dict[EquitySyntheticPolicyBindingIdentity, tuple[str, str]] = {}
-        self.script: list[str] = []
-        self.load_failure: str | None = None
-        self.before_load: Callable[[], None] | None = None
-        self.publishes = 0
-        self.loads = 0
-
-    def seed(self, bundle: EquitySyntheticPolicyBundle, *, with_set: bool = True) -> None:
-        """Test setup: store a bundle's bindings directly."""
-        for c in bundle.components:
-            self.definitions.setdefault(c.identity, (c.canonical_json(), c.fingerprint))
-        if with_set:
-            s = bundle.policy_set
-            self.sets.setdefault(s.identity, (s.reference_json(), s.policy_set_fingerprint))
-
-    def _definition(
-        self, identity: EquitySyntheticPolicyBindingIdentity
-    ) -> EquitySyntheticPolicyDefinitionBinding | None:
-        raw = self.definitions.get(identity)
-        return None if raw is None else EquitySyntheticPolicyDefinitionBinding.from_stored(*raw)
-
-    def _set(
-        self, identity: EquitySyntheticPolicyBindingIdentity
-    ) -> EquitySyntheticPolicySetBinding | None:
-        raw = self.sets.get(identity)
-        return (
-            None
-            if raw is None
-            else EquitySyntheticPolicySetBinding.from_stored(identity.namespace, *raw)
-        )
-
-    def _before_load(self) -> None:
-        if self.before_load is not None:
-            hook, self.before_load = self.before_load, None
-            hook()
-        self.loads += 1
-        if self.load_failure == "unavailable":
-            raise EquitySyntheticPolicyCatalogUnavailableError("test: catalog down")
-        if self.load_failure == "invalid":
-            raise InvalidEquitySyntheticPolicyBindingError("test: a stored row is corrupt")
-
-    def load_definition(self, identity):  # type: ignore[no-untyped-def]
-        self._before_load()
-        return self._definition(identity)
-
-    def load_policy_set(self, identity):  # type: ignore[no-untyped-def]
-        self._before_load()
-        return self._set(identity)
-
-    def publish(self, bundle: EquitySyntheticPolicyBundle) -> EquitySyntheticPolicyCatalogWrite:
-        self.publishes += 1
-        mode = self.script.pop(0) if self.script else "ok"
-        failures = {
-            "unavailable": EquitySyntheticPolicyCatalogUnavailableError("test: catalog down"),
-            "rollback": EquitySyntheticPolicyCatalogNotCommittedError("test: rolled back"),
-            "invalid": InvalidEquitySyntheticPolicyBindingError("test: stored row corrupt"),
-            "incompatible": IncompatibleEquitySyntheticPolicyBindingError("test: format /2"),
-            "lost_before": EquitySyntheticPolicyCatalogCommitUnconfirmedError(
-                "test: COMMIT failed"
-            ),
-        }
-        if mode in failures:
-            raise failures[mode]
-        if mode == "contradicting":
-            return EquitySyntheticPolicyCatalogWrite(_W.CONFLICT, (bundle.policy_set,))
-        conflicts: list[_Binding] = []
-        present = 0
-        for offered in (*bundle.components, bundle.policy_set):
-            stored = (
-                self._set(offered.identity)
-                if isinstance(offered, EquitySyntheticPolicySetBinding)
-                else self._definition(offered.identity)
-            )
-            if stored is not None:
-                present += 1
-                if stored != offered:
-                    conflicts.append(stored)
-        if conflicts:
-            return EquitySyntheticPolicyCatalogWrite(_W.CONFLICT, tuple(conflicts))
-        outcome = _W.EQUIVALENT if present == 6 else _W.COMMITTED
-        self.seed(bundle)
-        if mode == "lost_after":
-            raise EquitySyntheticPolicyCatalogCommitUnconfirmedError("test: ack lost after COMMIT")
-        return EquitySyntheticPolicyCatalogWrite(outcome, ())
-
-    def rows(self) -> tuple[dict[Any, Any], dict[Any, Any]]:
-        return dict(self.definitions), dict(self.sets)
+# The catalog test double lives with the EI-4C helpers, which the generator,
+# the recorder and these tests share (EI4-D10-S3 wires it into both).
+_Catalog = ei4c._Catalog
 
 
 def _publisher(catalog: _Catalog, max_writes: int = 3) -> PublishEquitySyntheticPoliciesUseCase:
@@ -790,7 +697,9 @@ def test_an_unpublished_catalog_gives_the_existing_unavailable_reasons() -> None
     assert catalog.publishes == 0 and catalog.rows() == ({}, {})
 
 
-def test_a_conflict_propagates_from_the_unchanged_generator_until_s3() -> None:
+def test_a_resolver_conflict_is_the_generation_reason_policy_reference_conflict() -> None:
+    # Until S3 this conflict propagated out of generation as an exception; the
+    # S3 generator reports it as its typed DQ6 reason instead.
     ports_, original = ei4c._proposed()
     catalog = _Catalog()
     assert original.inputs is not None
@@ -798,8 +707,11 @@ def test_a_conflict_propagates_from_the_unchanged_generator_until_s3() -> None:
     (text, fp), _ = _stored_variants()["fingerprint mismatch"]
     _corrupt(catalog, _T.PRICE_INCREMENT, text, fp)
     ports_.references = CatalogEquitySyntheticRecommendationReferences(catalog)  # type: ignore[assignment]
-    with pytest.raises(EquitySyntheticPolicyReferenceConflictError):
-        ports_.run()  # fails closed: no audit, nothing recorded
+    ports_.catalog = catalog
+    audit = ports_.run()
+    ei4c._refused(audit, ei4c._S.DEPENDENCY_UNAVAILABLE, ei4c._R.POLICY_REFERENCE_CONFLICT)
+    assert audit.generation_key is None and audit.inputs is None  # attempt-only
+    assert catalog.publishes == 1
 
 
 # ----------------------------------------------------------------------
@@ -915,6 +827,10 @@ def test_one_label_with_two_contents_across_records_is_a_historical_conflict() -
     _, first = _stored()
     ports_, _ = ei4c._proposed()
     ports_.references.hold("timing", ei4c._timing_policy(latency=timedelta(minutes=4)))
+    # A record made before enforcement: no single catalog bound the label then, so
+    # this one is generated against its own catalog. Under one catalog, EI4-D10-S3
+    # refuses the reuse at generation (POLICY_REFERENCE_CONFLICT).
+    ports_.catalog = ei4c._Catalog()
     second = equity_recommendation_disposition(ports_.run())
     assert second is not None and second.generation_key != first.generation_key
     result = _audit(_Records(first, second), _Catalog())
@@ -1010,27 +926,25 @@ def test_historical_replay_stays_independent_of_the_catalog() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_existing_generation_and_recording_constructors_are_unchanged() -> None:
-    assert list(inspect.signature(GenerateEquityTradeRecommendationUseCase).parameters) == [
+def test_generation_and_recording_constructors_require_the_catalog_since_s3() -> None:
+    # S1 left both constructors unchanged; EI4-D10-S3 adds the catalog, required.
+    generator = inspect.signature(GenerateEquityTradeRecommendationUseCase).parameters
+    assert list(generator) == [
         "timelines",
         "snapshots",
         "venue_days",
         "references",
         "listing_eligibility",
         "session_history",
+        "policy_catalog",
     ]
-    assert list(inspect.signature(RecordEquityRecommendationGenerationUseCase).parameters) == [
-        "store",
-        "verifier",
-        "max_writes",
-    ]
-    for module in (
-        application_services.generate_equity_trade_recommendation,
-        application_services.record_equity_recommendation_generation,
-        application_services.verify_equity_recommendation_generation,
-    ):
-        source = inspect.getsource(module)
-        assert "PolicyCatalog" not in source and "policy_bindings" not in source
+    recorder = inspect.signature(RecordEquityRecommendationGenerationUseCase).parameters
+    assert list(recorder) == ["store", "verifier", "policy_catalog", "max_writes"]
+    for parameters in (generator, recorder):
+        assert parameters["policy_catalog"].default is inspect.Parameter.empty
+    # Historical replay still never reads the catalog (ADR-022 section 9).
+    source = inspect.getsource(application_services.verify_equity_recommendation_generation)
+    assert "PolicyCatalog" not in source and "policy_bindings" not in source
 
 
 def test_the_new_contracts_are_exported() -> None:
