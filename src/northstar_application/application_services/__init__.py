@@ -363,6 +363,16 @@ from northstar_application.application_services.evaluate_historical_research imp
     EvaluateHistoricalResearchUseCase,
     HistoricalResearchEvaluation,
 )
+from northstar_application.application_services.evaluate_synthetic_equity_recommendation_lifecycle import (  # noqa: E501
+    EquitySyntheticLifecycleEvaluation,
+    EquitySyntheticLifecycleRefusal,
+    EquitySyntheticLifecycleRefusedError,
+    EquitySyntheticLifecycleRequest,
+    EquitySyntheticLifecycleSnapshotPosition,
+    EquitySyntheticLifecycleStep,
+    EvaluateSyntheticEquityRecommendationLifecycleUseCase,
+    InvalidEquitySyntheticLifecycleRequestError,
+)
 from northstar_application.application_services.freeze_futures_forward_research_decision import (
     FreezeFuturesForwardResearchDecisionUseCase,
 )
@@ -733,6 +743,14 @@ __all__ = [
     "EquityRecommendationSourceVerificationError",
     "EquityVerifiedRecommendationGeneration",
     "VerifyStoredEquityRecommendationGenerationUseCase",
+    "EquitySyntheticLifecycleEvaluation",
+    "EquitySyntheticLifecycleRefusal",
+    "EquitySyntheticLifecycleRefusedError",
+    "EquitySyntheticLifecycleRequest",
+    "EquitySyntheticLifecycleSnapshotPosition",
+    "EquitySyntheticLifecycleStep",
+    "EvaluateSyntheticEquityRecommendationLifecycleUseCase",
+    "InvalidEquitySyntheticLifecycleRequestError",
     "EQUITY_RECOMMENDATION_RECORD_WRITES",
     "EquityRecommendationRecordingOutcome",
     "EquityRecommendationRecordingResult",
