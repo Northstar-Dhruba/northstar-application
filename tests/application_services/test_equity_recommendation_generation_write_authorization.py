@@ -239,7 +239,7 @@ def test_c_a_disposition_changed_after_issuance_is_refused(field_name: str) -> N
     assert other_disposition is not None
     assert other_disposition.generation_key == authorization.disposition.generation_key
     value = {
-        "evaluator_version": "northstar.equity-recommendation-evaluator/2",
+        "evaluator_version": ei4d._FUTURE,  # an unsupported label (TH-01)
     }.get(field_name, getattr(other_disposition, field_name))
     _tamper(authorization.disposition, field_name, value)
     store = ei4d._Store()

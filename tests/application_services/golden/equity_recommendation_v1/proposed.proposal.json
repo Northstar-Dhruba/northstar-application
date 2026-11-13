@@ -1,0 +1,80 @@
+{
+  "actionable": false,
+  "authoritative": false,
+  "definition": {
+    "format": "northstar.equity-recommendation-core-outcome/1",
+    "kind": "DEFINITION",
+    "outcome": {
+      "cost_schedule_version": "synthetic-ei4c-costs/1",
+      "direction": "LONG",
+      "generation_policy_version": "synthetic-ei4c-generation/1",
+      "levels": {
+        "currency": "INR",
+        "entry_zone": {
+          "high": "102.5",
+          "low": "101.5"
+        },
+        "stop": "99",
+        "target": "109.5"
+      },
+      "price_increment": {
+        "amount": "0.05",
+        "version": "synthetic-ei4c-increment/1"
+      },
+      "risk_policy_version": "synthetic-ei4c-risk/1",
+      "sizing": {
+        "currency": "INR",
+        "entry_cost": "10",
+        "entry_notional": "19987.5",
+        "exposure_budget": "20000",
+        "gross_reward": "1365",
+        "gross_risk": "682.5",
+        "net_reward": "1340.05",
+        "net_risk": "706.02",
+        "quantity": 195,
+        "risk_budget": "1000",
+        "stop_exit_cost": "13.52",
+        "target_exit_cost": "14.95"
+      },
+      "source": {
+        "candidate_entry_fingerprint": "eirt1-sha256:cb9aed19dbf0a097845f3e0e01912b6b83b2c94b432847a4c82af0717295bf76",
+        "decision_as_of": "2026-08-12T04:06:00Z",
+        "evidence_snapshot_id": "ecs1-sha256:a7695d1abc0ff506fbce773680f03141c2d334e2a9c2a62303e06b04eecb1a0a",
+        "listing": {
+          "exchange_code": "NSE",
+          "symbol": "M&M"
+        },
+        "research_configuration_version": "synthetic-ei4c-research/1",
+        "research_decision_fingerprint": "eir1-sha256:9a047a8c43af5cc0086d6a5c6af3cbafa483b7b6f8bada7f08214a9d15cc2d28",
+        "strategy": "ei4c-orb-vwap-volume",
+        "trading_date": "2026-08-12"
+      }
+    }
+  },
+  "entry_window": {
+    "latest_entry_bar_opens_at": "2026-08-12T05:15:00Z",
+    "modeled_exit_at": "2026-08-12T08:30:00Z",
+    "timing": {
+      "decision_as_of": "2026-08-12T04:06:00Z",
+      "eligible_from": "2026-08-12T04:10:00Z",
+      "issuance_kind": "MODELED",
+      "issued_at": "2026-08-12T04:06:00Z"
+    },
+    "timing_policy_version": "synthetic-ei4c-timing/1"
+  },
+  "format": "northstar.equity-recommendation-proposal/1",
+  "generation_key": "eirk1-sha256:4161d4d3fa27fcf1ceffb413a2428e04cfa9bb8154aad02935778cc217a1ece6",
+  "issued": false,
+  "listing_eligibility_version": "synthetic-ei4c-eligibility/1",
+  "not_assessed": [
+    "SAME_LISTING_EXCLUSIVITY",
+    "PORTFOLIO_EXPOSURE",
+    "DAILY_LOSS_LIMIT",
+    "PRE_ENTRY_INVALIDATION",
+    "CORPORATE_ACTIONS",
+    "EXCHANGE_SURVEILLANCE",
+    "CANDLE_REVISION_MATERIALITY"
+  ],
+  "synthetic": true,
+  "universe_version": "synthetic-ei4c-universe/1"
+}

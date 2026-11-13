@@ -21,6 +21,7 @@ import json
 import sys
 from collections.abc import Callable
 from datetime import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -386,7 +387,7 @@ def test_d_aj_unsupported_formats_and_evaluators_are_incompatible_not_migrated()
     with pytest.raises(IncompatibleEquityRecommendationRecordError):
         decode_equity_recommendation_inputs(nested)
     with pytest.raises(IncompatibleEquityRecommendationRecordError, match="Evaluator"):
-        _rebuilt(disposition, evaluator_version="northstar.equity-recommendation-evaluator/2")
+        _rebuilt(disposition, evaluator_version=_FUTURE)
     with pytest.raises(InvalidEquityRecommendationRecordError):
         _rebuilt(disposition, evaluator_version="")
 
@@ -1116,9 +1117,14 @@ def test_contracts_are_validated_and_exported() -> None:
 # verifier, which replays only the evaluator a record names. Only one
 # evaluator exists, so a second *supported* label is simulated below by
 # widening the supported set, test-only. No second evaluator is executed.
+#
+# ADR-025 approves northstar.equity-recommendation-evaluator/2, so that label
+# can no longer stand for an unknown evaluator (EI-4C slice 1, TH-01). This
+# deliberately unsupported label is outside the governed set (/1 and /2) and
+# is used nowhere in production (TH-03).
 # ----------------------------------------------------------------------
 
-_FUTURE = "northstar.equity-recommendation-evaluator/2"
+_FUTURE = "northstar.equity-recommendation-evaluator/999"
 
 
 @pytest.fixture
@@ -1238,6 +1244,20 @@ def test_evaluator_7_replay_requires_the_evaluator_the_record_names() -> None:
         VerifyStoredEquityRecommendationGenerationUseCase(store, _verifier(ports_)).execute(
             current.generation_key
         )
+
+
+def test_evaluator_8_the_unsupported_test_label_is_outside_the_governed_set() -> None:
+    # TH-01 and TH-03: the stand-in for an unknown evaluator is neither version 1 nor the
+    # ADR-025-approved version 2, is not supported, and appears in no production module.
+    governed = {
+        "northstar.equity-recommendation-evaluator/1",
+        "northstar.equity-recommendation-evaluator/2",
+    }
+    assert _FUTURE not in governed
+    assert _FUTURE not in decoding_module.SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS
+    sources = list(Path(inspect.getfile(application_services)).parents[1].rglob("*.py"))
+    assert sources
+    assert not [p for p in sources if "evaluator/999" in p.read_text(encoding="utf-8")]
 
 
 def test_evaluator_9_fingerprint_formats_are_unchanged() -> None:
