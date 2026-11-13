@@ -1,0 +1,150 @@
+{
+  "candidate": {
+    "candidate_sequence": 2,
+    "currency": "INR",
+    "manifest_fingerprint": "ecm1-sha256:5e3ba7f461fbf5e27465402a00c9f35ad3cfbd91c6732363383ceba4e827eb57",
+    "opening_range_low": "99",
+    "research_window": {
+      "closes_at": "2026-08-12T09:30:00Z",
+      "opens_at": "2026-08-12T03:45:00Z",
+      "policy_version": "nse-equity-intraday-v1-research-window/1",
+      "timeframe": "5m"
+    },
+    "signal_close": "102.5",
+    "signal_interval_end": "2026-08-12T04:05:00Z",
+    "source": {
+      "candidate_entry_fingerprint": "eirt1-sha256:cb9aed19dbf0a097845f3e0e01912b6b83b2c94b432847a4c82af0717295bf76",
+      "decision_as_of": "2026-08-12T04:06:00Z",
+      "evidence_snapshot_id": "ecs1-sha256:a7695d1abc0ff506fbce773680f03141c2d334e2a9c2a62303e06b04eecb1a0a",
+      "listing": {
+        "exchange_code": "NSE",
+        "symbol": "M&M"
+      },
+      "research_configuration_version": "synthetic-ei4c-research/1",
+      "research_decision_fingerprint": "eir1-sha256:9a047a8c43af5cc0086d6a5c6af3cbafa483b7b6f8bada7f08214a9d15cc2d28",
+      "strategy": "ei4c-orb-vwap-volume",
+      "trading_date": "2026-08-12"
+    },
+    "venue_provenance": "SYNTHETIC",
+    "venue_reference": "test-venue/1"
+  },
+  "format": "northstar.equity-recommendation-generation-inputs/1",
+  "issued_history": {
+    "as_of": "2026-08-12T04:06:00Z",
+    "complete_through": "2026-08-12T10:00:00Z",
+    "exchange_code": "NSE",
+    "recommendations": [],
+    "recording_watermark": 0,
+    "reference": "test-history/\u00fcber-1",
+    "trading_date": "2026-08-12"
+  },
+  "listing_eligibility": {
+    "findings": [
+      {
+        "basis": "synthetic fixture",
+        "criterion": "UNIVERSE_MEMBERSHIP",
+        "verdict": "ELIGIBLE"
+      },
+      {
+        "basis": "synthetic fixture",
+        "criterion": "LISTING_STATUS",
+        "verdict": "ELIGIBLE"
+      },
+      {
+        "basis": "synthetic fixture",
+        "criterion": "SERIES",
+        "verdict": "ELIGIBLE"
+      },
+      {
+        "basis": "synthetic fixture",
+        "criterion": "PRICE",
+        "verdict": "ELIGIBLE"
+      },
+      {
+        "basis": "synthetic fixture",
+        "criterion": "LIQUIDITY",
+        "verdict": "ELIGIBLE"
+      }
+    ],
+    "listing": {
+      "exchange_code": "NSE",
+      "symbol": "M&M"
+    },
+    "provenance": "test-synthetic-eligibility",
+    "trading_date": "2026-08-12",
+    "universe_version": "synthetic-ei4c-universe/1",
+    "version": "synthetic-ei4c-eligibility/1"
+  },
+  "modeled_issued_at": "2026-08-12T04:06:00Z",
+  "policy_set": {
+    "cost_schedule": {
+      "components": [
+        {
+          "label": "synthetic-entry",
+          "per_order": "0",
+          "per_share": "0",
+          "proportional_rate": "0.0003",
+          "side": "ENTRY"
+        },
+        {
+          "label": "synthetic-exit",
+          "per_order": "0",
+          "per_share": "0",
+          "proportional_rate": "0.0005",
+          "side": "EXIT"
+        }
+      ],
+      "currency": "INR",
+      "rounding_increment": "0.01",
+      "slippage_rate_per_side": "0.0002",
+      "version": "synthetic-ei4c-costs/1"
+    },
+    "format": "northstar.equity-recommendation-policy-set/1",
+    "generation_policy": {
+      "entry_offset_above": "0",
+      "entry_offset_below": "0.01",
+      "minimum_net_reward_to_risk": "1.5",
+      "target_risk_multiple": "2",
+      "version": "synthetic-ei4c-generation/1"
+    },
+    "price_increment": {
+      "amount": "0.05",
+      "version": "synthetic-ei4c-increment/1"
+    },
+    "reference": {
+      "cost_schedule_version": "synthetic-ei4c-costs/1",
+      "generation_policy_version": "synthetic-ei4c-generation/1",
+      "price_increment_version": "synthetic-ei4c-increment/1",
+      "risk_policy_version": "synthetic-ei4c-risk/1",
+      "timing_policy_version": "synthetic-ei4c-timing/1",
+      "version": "synthetic-ei4c-set/1"
+    },
+    "risk_policy": {
+      "currency": "INR",
+      "exposure_fraction": "0.2",
+      "model_capital": "100000",
+      "risk_fraction": "0.01",
+      "version": "synthetic-ei4c-risk/1"
+    },
+    "timing_policy": {
+      "exchange_code": "NSE",
+      "latest_entry_bar_opening": "10:45:00",
+      "latest_signal_bar_end": "10:30:00",
+      "minimum_remaining_session_minutes": 60,
+      "modeled_exit_boundary": "14:00:00",
+      "modeled_issuance_latency_microseconds": 0,
+      "research_window_policy_version": "nse-equity-intraday-v1-research-window/1",
+      "version": "synthetic-ei4c-timing/1"
+    }
+  },
+  "policy_set_fingerprint": "eirs1-sha256:7602c7204df699f0c18eed863b11e835d0eb1ecb720ab6ee979b9b950e959986",
+  "venue_day": {
+    "classification": "NORMAL_SESSION",
+    "common_closes_at": "2026-08-12T10:00:00Z",
+    "common_opens_at": "2026-08-12T03:45:00Z",
+    "exchange_code": "NSE",
+    "reference": "test-venue/1",
+    "trading_date": "2026-08-12",
+    "utc_offset_minutes": 330
+  }
+}
