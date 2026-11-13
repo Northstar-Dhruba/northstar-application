@@ -46,6 +46,17 @@ assessment fingerprint. It holds no instant, counter or prose, so identical
 invocations are one logical attempt (EI4-D9 clarification B), and two outages
 that differ only in their exception messages are the same attempt.
 
+Evaluator versions (ADR-025)
+----------------------------
+A disposition names its evaluator label; it must be one of the two governed
+labels (an unknown one is Incompatible, a missing one Invalid) and its
+assessment -- with its embedded inputs -- must be in that evaluator's formats,
+or construction fails Invalid (N6). An attempt names no label: its format is
+its evaluator's (``generation-attempt/1`` or ``/2``, N4), so attempts of the
+two versions never share an identity, and only a version-2 attempt may state a
+version-2 reason. Every load by a store adapter constructs through here, so
+an unpaired record is never returned, verified or authorized.
+
 Content equality
 ----------------
 For one generation key, equal assessment fingerprints mean equal content and
@@ -61,18 +72,20 @@ from enum import StrEnum
 from typing import Any
 
 from northstar_application.application_services.equity_recommendation_generation_decoding import (
-    EQUITY_RECOMMENDATION_EVALUATOR_VERSION,
     EquityDecodedAssessment,
     InvalidEquityRecommendationRecordError,
     decode_equity_recommendation_assessment,
     decode_equity_trade_recommendation_proposal,
     decode_equity_trade_recommendation_request,
     decode_structured_checks,
+    equity_recommendation_document_evaluator,
+    require_paired_equity_recommendation_evaluator,
     require_supported_equity_recommendation_evaluator,
     verified_equity_recommendation_document,
 )
 from northstar_application.application_services.equity_recommendation_generation_evidence import (
-    EQUITY_RECOMMENDATION_ATTEMPT_FORMAT,
+    EQUITY_RECOMMENDATION_EVALUATOR_V2,
+    EQUITY_RECOMMENDATION_EVALUATORS,
     EQUITY_RECOMMENDATION_PROPOSAL_FORMAT,
     EquityRecommendationCandidateProvenance,
     EquityRecommendationInputs,
@@ -81,6 +94,7 @@ from northstar_application.application_services.equity_recommendation_generation
     is_equity_recommendation_generation_key,
 )
 from northstar_application.application_services.equity_trade_recommendation_eligibility import (
+    EQUITY_RECOMMENDATION_VERSION_2_REASONS,
     EquityRecommendationEligibilityAudit,
     EquityRecommendationEligibilityReason,
     EquityRecommendationGenerationStatus,
@@ -151,9 +165,14 @@ class EquityRecommendationGenerationDisposition:
             _invalid("A disposition needs an eirk1 generation key.")
         if not isinstance(self.kind, EquityRecommendationDispositionKind):
             _invalid("kind must be an EquityRecommendationDispositionKind.")
+        # An unknown label is Incompatible and a missing one Invalid, before anything is
+        # decoded; then the documents must be that evaluator's (N6): otherwise Invalid.
         require_supported_equity_recommendation_evaluator(self.evaluator_version)
         assessment = decode_equity_recommendation_assessment(
             self.assessment_document, self.assessment_fingerprint
+        )
+        require_paired_equity_recommendation_evaluator(
+            self.evaluator_version, assessment.evaluator_version, "assessment"
         )
         if assessment.inputs is None or assessment.generation_key != self.generation_key:
             _invalid("A disposition's assessment must establish this generation key.")
@@ -239,7 +258,7 @@ class EquityRecommendationGenerationDisposition:
         return cls(
             generation_key=audit.generation_key,  # type: ignore[arg-type]
             kind=kind,  # type: ignore[arg-type]
-            evaluator_version=EQUITY_RECOMMENDATION_EVALUATOR_VERSION,
+            evaluator_version=audit.evaluator_version,  # the evaluator that produced it
             assessment_fingerprint=audit.assessment_fingerprint,
             assessment_document=canonical_equity_recommendation_json(audit.assessment_document()),
             proposal_fingerprint=None if proposal is None else proposal.fingerprint,
@@ -278,7 +297,7 @@ def _attempt_document(audit: EquityRecommendationEligibilityAudit) -> dict[str, 
     kind = equity_recommendation_disposition_kind(audit)
     keyed = audit.generation_key is not None
     return {
-        "format": EQUITY_RECOMMENDATION_ATTEMPT_FORMAT,
+        "format": EQUITY_RECOMMENDATION_EVALUATORS[audit.evaluator_version].attempt_format,
         "request": audit.request.document(),
         "status": audit.status.value,
         "reasons": [reason.value for reason in audit.reasons],
@@ -295,10 +314,13 @@ class EquityRecommendationGenerationAttempt:
 
     ``attempt_identity`` is the ``eirat1`` fingerprint of ``attempt_document``;
     construction decodes the document and verifies them against each other.
+    ``evaluator_version`` is the evaluator its format belongs to (N4): an attempt
+    pairs with the evaluator of its own audit, and names no label of its own.
     """
 
     attempt_identity: str
     attempt_document: str
+    evaluator_version: str = field(init=False)
     status: EquityRecommendationGenerationStatus = field(init=False)
     reasons: tuple[EquityRecommendationEligibilityReason, ...] = field(init=False)
     generation_key: str | None = field(init=False)
@@ -309,9 +331,10 @@ class EquityRecommendationGenerationAttempt:
         document = verified_equity_recommendation_document(
             self.attempt_document,
             self.attempt_identity,
-            EQUITY_RECOMMENDATION_ATTEMPT_FORMAT,
+            tuple(row.attempt_format for row in EQUITY_RECOMMENDATION_EVALUATORS.values()),
             "attempt",
         )
+        evaluator = equity_recommendation_document_evaluator("attempt", document["format"])
         try:
             if set(document) != set(_ATTEMPT_FIELDS):
                 _invalid("An attempt document has missing or unexpected fields.")
@@ -325,6 +348,10 @@ class EquityRecommendationGenerationAttempt:
                 _invalid("An attempt's reasons must be distinct and in declaration order.")
             if equity_recommendation_status(reasons) is not status:
                 _invalid("An attempt's status does not follow from its reasons.")
+            if evaluator != EQUITY_RECOMMENDATION_EVALUATOR_V2 and (
+                EQUITY_RECOMMENDATION_VERSION_2_REASONS & set(reasons)
+            ):
+                _invalid("Only a version-2 attempt can state a version-2 reason.")
             checks = decode_structured_checks(document["checks"])
             if set(reasons) != {r for _, _, found in checks for r in found}:
                 _invalid("An attempt's reasons are not its checks' reasons.")
@@ -346,6 +373,7 @@ class EquityRecommendationGenerationAttempt:
             if isinstance(exc, InvalidEquityRecommendationRecordError):
                 raise
             raise InvalidEquityRecommendationRecordError(f"Attempt does not decode: {exc}") from exc
+        object.__setattr__(self, "evaluator_version", evaluator)
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "reasons", reasons)
         object.__setattr__(self, "generation_key", key)

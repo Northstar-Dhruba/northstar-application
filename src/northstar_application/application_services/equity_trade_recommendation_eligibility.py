@@ -99,8 +99,10 @@ from northstar_core.recommendations.equity import (
 )
 
 from northstar_application.application_services.equity_recommendation_generation_evidence import (
-    EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT,
     EQUITY_RECOMMENDATION_CORE_OUTCOME_FORMAT,
+    EQUITY_RECOMMENDATION_EVALUATOR_V1,
+    EQUITY_RECOMMENDATION_EVALUATOR_V2,
+    EQUITY_RECOMMENDATION_EVALUATORS,
     EQUITY_RECOMMENDATION_PROPOSAL_FORMAT,
     EquityRecommendationCandidateProvenance,
     EquityRecommendationInputs,
@@ -228,6 +230,10 @@ class EquityRecommendationEligibilityReason(StrEnum):
     LISTING_ELIGIBILITY_UNKNOWN = "LISTING_ELIGIBILITY_UNKNOWN"
     OPEN_RECOMMENDATION_STATE_UNAVAILABLE = "OPEN_RECOMMENDATION_STATE_UNAVAILABLE"
     RECOMMENDATION_HISTORY_INCOMPLETE = "RECOMMENDATION_HISTORY_INCOMPLETE"
+    # N10 case C (owner approved 2026-11-13): evaluator version 2 only. The history is
+    # declared complete beyond b = t - 1 us, so the modeled issuance at t can never be
+    # issued; permanent, never retried into success, never INCOMPLETE.
+    RECOMMENDATION_HISTORY_BOUNDARY_EXCEEDED = "RECOMMENDATION_HISTORY_BOUNDARY_EXCEEDED"
     # Timing (EI4-D1, EI0-D7 structure, EI4-D9-C)
     SESSION_NOT_SUPPORTED = "SESSION_NOT_SUPPORTED"
     TIMING_POLICY_NOT_APPLICABLE = "TIMING_POLICY_NOT_APPLICABLE"
@@ -274,8 +280,11 @@ _DEPENDENCY = frozenset(
         _R.LISTING_ELIGIBILITY_UNKNOWN,
         _R.OPEN_RECOMMENDATION_STATE_UNAVAILABLE,
         _R.RECOMMENDATION_HISTORY_INCOMPLETE,
+        _R.RECOMMENDATION_HISTORY_BOUNDARY_EXCEEDED,
     }
 )
+# Reasons only a version-2 evaluation can produce (ADR-025, N10 case C).
+EQUITY_RECOMMENDATION_VERSION_2_REASONS = frozenset({_R.RECOMMENDATION_HISTORY_BOUNDARY_EXCEEDED})
 _UNRESOLVED = frozenset(
     {
         _R.EXCLUSIVITY_POLICY_UNRESOLVED,
@@ -614,6 +623,9 @@ class EquityRecommendationEligibilityAudit:
     (when Core ran) and the proposal (when PROPOSED). ``status`` and
     ``reasons`` are derived from the checks. ``observed_timeline_head`` is the
     timeline head seen while loading: diagnostics only, never identity.
+    ``evaluator_version`` is the governed evaluator that produced it (ADR-025):
+    it chooses the assessment and attempt formats, and so their identities,
+    even when no inputs were frozen; it is never a field of any document.
 
     It is suitable for EI-4D persistence but is not persisted, and it is not
     authoritative.
@@ -627,10 +639,13 @@ class EquityRecommendationEligibilityAudit:
     core_outcome: EquityRecommendationDefinition | EquityRecommendationRejection | None
     proposal: EquityTradeRecommendationProposal | None
     observed_timeline_head: str | None = None
+    evaluator_version: str = EQUITY_RECOMMENDATION_EVALUATOR_V1
 
     def __post_init__(self) -> None:
         if not isinstance(self.request, EquityTradeRecommendationRequest):
             _invalid("request must be an EquityTradeRecommendationRequest.")
+        if self.evaluator_version not in EQUITY_RECOMMENDATION_EVALUATORS:
+            _invalid(f"{self.evaluator_version!r} is not a governed evaluator version.")
         checks = self.checks
         if not isinstance(checks, tuple) or tuple(
             c.check for c in checks if isinstance(c, EquityRecommendationCheckResult)
@@ -670,6 +685,10 @@ class EquityRecommendationEligibilityAudit:
             _invalid("A Core formation reason needs a Core rejection.")
         if core is not None and (self.candidate is None or core.source != self.candidate.source):
             _invalid("Core can only have run on the audited candidate.")
+        if self.evaluator_version != EQUITY_RECOMMENDATION_EVALUATOR_V2 and (
+            EQUITY_RECOMMENDATION_VERSION_2_REASONS & set(self.reasons)
+        ):
+            _invalid("Only a version-2 evaluation can report a version-2 reason.")
         self._check_inputs()
 
     def _check_inputs(self) -> None:
@@ -680,6 +699,8 @@ class EquityRecommendationEligibilityAudit:
             return
         if not isinstance(inputs, EquityRecommendationInputs):
             _invalid("inputs must be EquityRecommendationInputs or None.")
+        if inputs.evaluator_version != self.evaluator_version:
+            _invalid("The inputs were frozen for another evaluator version.")
         if inputs.candidate != self.candidate:
             _invalid("The inputs must hold the audited candidate.")
         if inputs.policy_set.reference != self.request.policy_set:
@@ -730,7 +751,7 @@ class EquityRecommendationEligibilityAudit:
         core = self.core_outcome
         proposal = self.proposal
         return {
-            "format": EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT,
+            "format": EQUITY_RECOMMENDATION_EVALUATORS[self.evaluator_version].assessment_format,
             "synthetic": True,
             "authoritative": False,
             "request": self.request.document(),

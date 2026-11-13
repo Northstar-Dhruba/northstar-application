@@ -155,6 +155,8 @@ def _check_generation(
         disposition.kind,
     ):
         _refuse("The attempt is not the attempt of this disposition.")
+    if attempt.evaluator_version != disposition.evaluator_version:
+        _refuse("The attempt is not of the evaluator that produced this disposition (N6).")
     return disposition
 
 
