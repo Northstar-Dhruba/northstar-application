@@ -53,6 +53,9 @@ from northstar_application.application_services.audit_equity_recommendation_poli
     EquityRecommendationPolicyBindingRecordAudit,
     EquityRecommendationPolicyBindingStatus,
 )
+from northstar_application.application_services.authoritative_equity_session_recommendation_history import (  # noqa: E501
+    AuthoritativeEquitySessionRecommendationHistorySource,
+)
 from northstar_application.application_services.build_forward_research_report import (
     BuildForwardResearchReportUseCase,
     ForwardResearchReport,
@@ -161,6 +164,12 @@ from northstar_application.application_services.create_futures_execution_intent 
 from northstar_application.application_services.create_paper_execution_identities import (
     CreatePaperExecutionIdentitiesUseCase,
     PaperExecutionIdentities,
+)
+from northstar_application.application_services.declare_equity_session_issuance_completeness import (  # noqa: E501
+    EQUITY_ISSUANCE_DECLARATION_WRITES,
+    DeclareEquitySessionIssuanceCompletenessUseCase,
+    EquityIssuanceDeclarationResult,
+    EquityIssuanceDeclarationUnresolvedError,
 )
 from northstar_application.application_services.equity_candle_evidence_journal import (
     EQUITY_CANDLE_PAYLOAD_FINGERPRINT_PREFIX,
@@ -298,6 +307,34 @@ from northstar_application.application_services.equity_recommendation_generation
     VerifiedEquityRecommendationGenerationWrite,
     require_verified_equity_recommendation_attempt_write,
     require_verified_equity_recommendation_generation_write,
+)
+from northstar_application.application_services.equity_recommendation_issuance_authorization import (  # noqa: E501
+    InvalidEquityIssuanceCompletenessDeclarationError,
+    VerifiedEquityIssuanceCompletenessDeclaration,
+    VerifiedEquityRecommendationIssuance,
+    equity_declaration_venue_day_problem,
+    require_verified_equity_issuance_completeness_declaration,
+    require_verified_equity_recommendation_issuance,
+)
+from northstar_application.application_services.equity_recommendation_issuance_records import (
+    EQUITY_RECOMMENDATION_ISSUANCE_AUTHORITY_REFERENCE,
+    EQUITY_RECOMMENDATION_ISSUANCE_KEY_NAMESPACE,
+    EQUITY_RECOMMENDATION_ISSUANCE_PREFIX,
+    EquityIssuanceCompletenessDeclaration,
+    EquityIssuedRecommendation,
+    EquityRecordedCompletenessDeclaration,
+    EquityRecordedIssuance,
+    InvalidEquityIssuedRecommendationError,
+    equity_issued_recommendation,
+    equity_recommendation_issuance_identity,
+    is_equity_recommendation_issuance_identity,
+)
+from northstar_application.application_services.equity_recommendation_issuance_rules import (
+    equity_declaration_write_decision,
+    equity_declared_complete_through,
+    equity_issuance_is_backdated,
+    equity_issuance_session_view,
+    equity_issuance_write_decision,
 )
 from northstar_application.application_services.equity_research_window import (
     NSE_EQUITY_INTRADAY_V1_RESEARCH_WINDOW,
@@ -501,6 +538,14 @@ from northstar_application.application_services.ingest_historical_market_data im
     HistoricalDataContractViolationError,
     HistoricalMarketDataIngestionResult,
     IngestHistoricalMarketDataUseCase,
+)
+from northstar_application.application_services.issue_equity_trade_recommendation import (
+    EQUITY_RECOMMENDATION_ISSUANCE_WRITES,
+    EquityRecommendationIssuanceRefusal,
+    EquityRecommendationIssuanceRefusedError,
+    EquityRecommendationIssuanceResult,
+    EquityRecommendationIssuanceUnresolvedError,
+    IssueEquityTradeRecommendationUseCase,
 )
 from northstar_application.application_services.measure_forward_research_record import (
     ForwardResearchMeasurement,
@@ -1080,4 +1125,38 @@ __all__ = [
     "VerifiedEquityRecommendationGenerationWrite",
     "require_verified_equity_recommendation_attempt_write",
     "require_verified_equity_recommendation_generation_write",
+    # EI-5D: MODELED recommendation issuance (ADR-024)
+    "AuthoritativeEquitySessionRecommendationHistorySource",
+    "DeclareEquitySessionIssuanceCompletenessUseCase",
+    "EQUITY_ISSUANCE_DECLARATION_WRITES",
+    "EQUITY_RECOMMENDATION_ISSUANCE_AUTHORITY_REFERENCE",
+    "EQUITY_RECOMMENDATION_ISSUANCE_KEY_NAMESPACE",
+    "EQUITY_RECOMMENDATION_ISSUANCE_PREFIX",
+    "EQUITY_RECOMMENDATION_ISSUANCE_WRITES",
+    "EquityIssuanceCompletenessDeclaration",
+    "EquityIssuanceDeclarationResult",
+    "EquityIssuanceDeclarationUnresolvedError",
+    "EquityIssuedRecommendation",
+    "EquityRecommendationIssuanceRefusal",
+    "EquityRecommendationIssuanceRefusedError",
+    "EquityRecommendationIssuanceResult",
+    "EquityRecommendationIssuanceUnresolvedError",
+    "EquityRecordedCompletenessDeclaration",
+    "EquityRecordedIssuance",
+    "InvalidEquityIssuanceCompletenessDeclarationError",
+    "InvalidEquityIssuedRecommendationError",
+    "IssueEquityTradeRecommendationUseCase",
+    "VerifiedEquityIssuanceCompletenessDeclaration",
+    "VerifiedEquityRecommendationIssuance",
+    "equity_declaration_venue_day_problem",
+    "equity_declaration_write_decision",
+    "equity_declared_complete_through",
+    "equity_issuance_is_backdated",
+    "equity_issuance_session_view",
+    "equity_issuance_write_decision",
+    "equity_issued_recommendation",
+    "equity_recommendation_issuance_identity",
+    "is_equity_recommendation_issuance_identity",
+    "require_verified_equity_issuance_completeness_declaration",
+    "require_verified_equity_recommendation_issuance",
 ]

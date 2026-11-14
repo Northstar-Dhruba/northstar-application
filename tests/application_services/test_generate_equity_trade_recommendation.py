@@ -2399,8 +2399,11 @@ def test_compat_v_contradictory_frozen_history_cannot_be_built() -> None:
 
 def test_compat_w_no_application_source_fabricates_an_issued_history() -> None:
     import northstar_application
+    from northstar_application.application_services import (
+        AuthoritativeEquitySessionRecommendationHistorySource as Authoritative,
+    )
 
-    sources = [
+    sources = {
         obj
         for module_name, module in list(__import__("sys").modules.items())
         if module_name.startswith("northstar_application")
@@ -2408,8 +2411,11 @@ def test_compat_w_no_application_source_fabricates_an_issued_history() -> None:
         if isinstance(obj, type)
         and issubclass(obj, EquitySessionRecommendationHistorySource)
         and obj is not EquitySessionRecommendationHistorySource
-    ]
-    assert sources == [], northstar_application.__name__
+    }
+    # EI-5D (ADR-024, sections 6 and 12) adds exactly one implementation, over the
+    # issuance authority's reader only: it never fabricates or assumes an empty history.
+    assert sources <= {Authoritative}, northstar_application.__name__
+    assert list(inspect.signature(Authoritative).parameters) == ["reader"]
     ports_ = _ports()
     ports_.state.answer = None
     _refused(ports_.run(), _S.DEPENDENCY_UNAVAILABLE, _R.OPEN_RECOMMENDATION_STATE_UNAVAILABLE)

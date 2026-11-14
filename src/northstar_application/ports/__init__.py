@@ -34,6 +34,19 @@ from northstar_application.ports.equity_recommendation_generation_store import (
     InvalidEquityRecommendationStoreWriteError,
     UnverifiedEquityRecommendationGenerationWriteError,
 )
+from northstar_application.ports.equity_recommendation_issuance import (
+    EquityIssuanceDeclarationOutcome,
+    EquityIssuanceDeclarationWrite,
+    EquityIssuanceWatermarkBeyondAuthorityError,
+    EquityRecommendationIssuanceCommitUnconfirmedError,
+    EquityRecommendationIssuanceOutcome,
+    EquityRecommendationIssuanceReader,
+    EquityRecommendationIssuanceUnavailableError,
+    EquityRecommendationIssuanceWrite,
+    EquityRecommendationIssuanceWriter,
+    InvalidEquityRecommendationIssuanceWriteError,
+    UnverifiedEquityRecommendationIssuanceWriteError,
+)
 from northstar_application.ports.equity_recommendation_references import (
     EquityPriorSessionRecommendation,
     EquityRecommendationHistoryUnavailableError,
@@ -448,4 +461,16 @@ __all__ = [
     "EquitySyntheticPolicyPublicationHistory",
     "InvalidEquitySyntheticPolicyCatalogWriteError",
     "EquitySyntheticPolicyReferenceConflictError",
+    # EI-5D: the MODELED recommendation issuance authority (ADR-024)
+    "EquityIssuanceDeclarationOutcome",
+    "EquityIssuanceDeclarationWrite",
+    "EquityIssuanceWatermarkBeyondAuthorityError",
+    "EquityRecommendationIssuanceCommitUnconfirmedError",
+    "EquityRecommendationIssuanceOutcome",
+    "EquityRecommendationIssuanceReader",
+    "EquityRecommendationIssuanceUnavailableError",
+    "EquityRecommendationIssuanceWrite",
+    "EquityRecommendationIssuanceWriter",
+    "InvalidEquityRecommendationIssuanceWriteError",
+    "UnverifiedEquityRecommendationIssuanceWriteError",
 ]
