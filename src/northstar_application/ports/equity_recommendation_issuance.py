@@ -44,6 +44,16 @@ Failures
 - EquityRecommendationIssuanceCommitUnconfirmedError: the commit outcome is
   unknown. It is never evidence of a rollback; the caller reconciles by an
   authoritative reload (the EI4-D9-G pattern).
+- InvalidStoredEquityRecommendationIssuanceAuthorityError (D6-5, EI-6A): the
+  authority's stored state is corrupt -- a stored issuance that does not
+  re-derive from its verified source, a corrupt or inconsistent completeness
+  declaration, or an inconsistent, orphaned or invalid recording-sequence
+  ledger. It is **permanent**: never an outage, never retryable, and never
+  read as an unknown or empty session. Readers raise it for any corrupt
+  state they meet; writers raise it only when nothing was written. A writer
+  that finds a corrupt record under the *offered* issuance identity reports
+  STORED_ISSUANCE_INVALID instead (EI-5 design, section 8.3). Nothing is
+  repaired.
 
 Nothing here reads a clock or calls a provider, broker or network.
 """
@@ -98,6 +108,55 @@ class UnverifiedEquityRecommendationIssuanceWriteError(ValueError):
 
 class InvalidEquityRecommendationIssuanceWriteError(ValueError):
     """Raised when an authority reports a write that its contract does not allow."""
+
+
+class InvalidStoredEquityRecommendationIssuanceAuthorityError(ValueError):
+    """Raised when the issuance authority's stored state is corrupt (D6-5, EI-6A).
+
+    A **permanent** integrity failure, distinct from every outage: it is not an
+    EquityRecommendationIssuanceUnavailableError, a commit-unconfirmed outcome,
+    a watermark refusal, a uniqueness conflict or a refused request, and it is
+    never retryable. Nothing was written, and nothing is repaired.
+
+    ``category`` names what failed, with one of the stable values below:
+
+    - ``ISSUANCE``: a stored issuance that cannot be decoded, does not
+      re-derive from the verified disposition it references, or disagrees
+      with that referenced record;
+    - ``DECLARATION``: a stored completeness declaration that is corrupt or
+      inconsistent;
+    - ``LEDGER``: the shared recording-sequence ledger is inconsistent,
+      orphaned or invalid, or disagrees with the records it sequences.
+
+    ``issuance_id`` names the stored issuance concerned, for ``ISSUANCE`` only,
+    when it is known; it is an identity, not stored content. Messages carry no
+    stored document content.
+    """
+
+    ISSUANCE = "ISSUANCE"
+    DECLARATION = "DECLARATION"
+    LEDGER = "LEDGER"
+    CATEGORIES = frozenset({ISSUANCE, DECLARATION, LEDGER})
+
+    def __init__(self, category: str, message: str, *, issuance_id: str | None = None) -> None:
+        if category not in self.CATEGORIES:
+            raise ValueError(f"category must be one of {sorted(self.CATEGORIES)}.")
+        if issuance_id is not None and (
+            category != self.ISSUANCE or not isinstance(issuance_id, str) or not issuance_id
+        ):
+            raise ValueError("issuance_id names a stored issuance, for ISSUANCE only.")
+        super().__init__(f"{category}: {message}")
+        self.category = category
+        self.issuance_id = issuance_id
+
+    @property
+    def retryable(self) -> bool:
+        """Always False: corrupt stored state never clears by retrying."""
+        return False
+
+    def concerns_issuance(self, issuance_id: str) -> bool:
+        """Return whether this failure is the stored issuance under ``issuance_id``."""
+        return self.category == self.ISSUANCE and self.issuance_id == issuance_id
 
 
 class EquityRecommendationIssuanceOutcome(StrEnum):

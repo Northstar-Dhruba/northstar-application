@@ -17,6 +17,12 @@ synthetic fixtures stay test-only, and the history contract is unchanged
   naming anything else, for another session, or one the authority cannot
   read raises EquityRecommendationHistoryUnavailableError. Nothing is
   repaired, inferred or backdated.
+- Corrupt stored authority state propagates the authority's
+  InvalidStoredEquityRecommendationIssuanceAuthorityError unchanged (D6-5).
+  It is permanent, so it is never mapped to the history-unavailable outage,
+  to None (unknown) or to an empty session. EI-4C generation does not handle
+  it, so it raises and records no audit, as for any unexpected failure; no
+  attempt is recorded under an outage classification.
 
 Records carry no lifecycle outcome: every issued recommendation stays open
 for EI-4C's exposure and exclusivity checks (EI4-D8, unchanged).

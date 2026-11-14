@@ -523,7 +523,11 @@ class EquitySessionRecommendationHistorySource(ABC):
     synthetic test fixtures implement this port, and no adapter may assert an
     empty session because issuance is not built. It raises
     EquityRecommendationHistoryUnavailableError when the record cannot be read
-    or verified. It never returns an assumed-empty session, and it never
+    or verified; an implementation over the issuance authority instead
+    propagates InvalidStoredEquityRecommendationIssuanceAuthorityError
+    unchanged when the authority's stored state is corrupt (D6-5), a
+    permanent failure that is never an unavailable record. It never returns
+    an assumed-empty session, and it never
     states completeness it has not established: a record whose
     ``complete_through`` is before ``as_of`` is refused by the caller as
     incomplete.

@@ -54,6 +54,23 @@ commit is reconciled by an authoritative reload by identity, with bounded
 retries (the EI4-D9-G pattern); when that cannot settle it,
 EquityRecommendationIssuanceUnresolvedError says nothing is claimed.
 
+Corrupt stored authority state (D6-5)
+-------------------------------------
+InvalidStoredEquityRecommendationIssuanceAuthorityError is permanent and is
+never mapped to the retryable AUTHORITY_UNAVAILABLE:
+
+- met while reading the authority's views, or raised by the writer (which
+  then wrote nothing), it is the permanent refusal STORED_AUTHORITY_INVALID;
+- when it concerns the stored issuance under this request's own identity --
+  from the writer or from the commit-uncertainty reload -- the outcome is
+  STORED_ISSUANCE_INVALID, as governed: the stored record is preserved and
+  never treated as equivalent;
+- met by the commit-uncertainty reload for any other stored state, it is
+  raised unchanged: whether this write committed cannot be verified, so
+  nothing is claimed, and the failure stays permanent.
+
+Nothing is repaired, adopted or overwritten.
+
 Nothing here reads a clock, writes the EI-4D records, creates an order, a
 fill, a position or a lifecycle event, or calls a provider, broker or network.
 """
@@ -107,6 +124,7 @@ from northstar_application.ports.equity_recommendation_issuance import (
     EquityRecommendationIssuanceWrite,
     EquityRecommendationIssuanceWriter,
     InvalidEquityRecommendationIssuanceWriteError,
+    InvalidStoredEquityRecommendationIssuanceAuthorityError,
 )
 
 EQUITY_RECOMMENDATION_ISSUANCE_WRITES = 3
@@ -133,6 +151,7 @@ class EquityRecommendationIssuanceRefusal(StrEnum):
     HISTORY_NOT_REPRODUCED = "HISTORY_NOT_REPRODUCED"
     AUTHORITATIVE_COMPLETENESS_NOT_DECLARED = "AUTHORITATIVE_COMPLETENESS_NOT_DECLARED"
     AUTHORITY_UNAVAILABLE = "AUTHORITY_UNAVAILABLE"
+    STORED_AUTHORITY_INVALID = "STORED_AUTHORITY_INVALID"
 
 
 _RETRYABLE = frozenset(
@@ -173,6 +192,21 @@ def _refuse(
 
 
 _R = EquityRecommendationIssuanceRefusal
+
+
+def _stored_issuance_invalid(
+    issuance: EquityIssuedRecommendation, writes: int, *, reconciled: bool
+) -> EquityRecommendationIssuanceResult:
+    """The governed outcome for a corrupt stored record under the offered identity."""
+    return EquityRecommendationIssuanceResult(
+        _O.STORED_ISSUANCE_INVALID,
+        issuance,
+        None,
+        writes,
+        reconciled,
+        "The stored record under this issuance identity is corrupt or does not re-derive; it "
+        "is preserved and never treated as equivalent.",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +360,11 @@ class IssueEquityTradeRecommendationUseCase:
             now = self._reader.session_view(exchange, day)
         except EquityRecommendationIssuanceUnavailableError as exc:
             raise _refuse(_R.AUTHORITY_UNAVAILABLE, str(exc)) from exc
+        except InvalidStoredEquityRecommendationIssuanceAuthorityError as exc:
+            raise _refuse(
+                _R.STORED_AUTHORITY_INVALID,
+                f"The authority's stored state is corrupt; nothing was written: {exc}",
+            ) from exc
         except EquityIssuanceWatermarkBeyondAuthorityError as exc:
             raise _refuse(
                 _R.HISTORY_NOT_REPRODUCED,
@@ -380,6 +419,13 @@ class IssueEquityTradeRecommendationUseCase:
                     _R.AUTHORITY_UNAVAILABLE,
                     f"The authority is unavailable; nothing was written: {exc}",
                 ) from exc
+            except InvalidStoredEquityRecommendationIssuanceAuthorityError as exc:
+                if exc.concerns_issuance(issuance.issuance_id):
+                    return _stored_issuance_invalid(issuance, write, reconciled=False)
+                raise _refuse(
+                    _R.STORED_AUTHORITY_INVALID,
+                    f"The authority's stored state is corrupt; nothing was written: {exc}",
+                ) from exc
             except EquityRecommendationIssuanceCommitUnconfirmedError as exc:
                 try:
                     found = self._reader.load_issuance(issuance.issuance_id)
@@ -388,6 +434,10 @@ class IssueEquityTradeRecommendationUseCase:
                         f"The commit is unconfirmed ({exc}) and the reload failed "
                         f"({reload_error}); nothing is claimed."
                     ) from reload_error
+                except InvalidStoredEquityRecommendationIssuanceAuthorityError as corrupt:
+                    if corrupt.concerns_issuance(issuance.issuance_id):
+                        return _stored_issuance_invalid(issuance, write, reconciled=True)
+                    raise  # Permanent; whether this write committed is not claimed.
                 if found is None:
                     continue
                 if found.recommendation != issuance:
