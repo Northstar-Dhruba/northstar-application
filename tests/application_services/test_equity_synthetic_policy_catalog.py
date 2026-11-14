@@ -194,6 +194,10 @@ def test_existing_eirs1_and_eirk1_are_unchanged() -> None:
         "northstar.equity-recommendation-assessment/1": "eira1-sha256:",
         "northstar.equity-recommendation-proposal/1": "eirp1-sha256:",
         "northstar.equity-recommendation-generation-attempt/1": "eirat1-sha256:",
+        # ADR-025 (N3): the version-2 documents reuse the same families.
+        "northstar.equity-recommendation-generation-inputs/2": "eiri1-sha256:",
+        "northstar.equity-recommendation-assessment/2": "eira1-sha256:",
+        "northstar.equity-recommendation-generation-attempt/2": "eirat1-sha256:",
     }
 
 
@@ -931,7 +935,10 @@ def test_generation_and_recording_constructors_require_the_catalog_since_s3() ->
         "listing_eligibility",
         "session_history",
         "policy_catalog",
+        "evaluator_version",  # ADR-025 (N7): keyword-only, defaulting to /1
     ]
+    assert generator["evaluator_version"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert generator["evaluator_version"].default == "northstar.equity-recommendation-evaluator/1"
     recorder = inspect.signature(RecordEquityRecommendationGenerationUseCase).parameters
     assert list(recorder) == ["store", "verifier", "policy_catalog", "max_writes"]
     for parameters in (generator, recorder):

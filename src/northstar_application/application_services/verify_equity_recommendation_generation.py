@@ -18,12 +18,16 @@ B. **Source referential integrity.** The record's original CANDIDATE is
    research window and venue reference. A later timeline entry, a correction
    included, never changes it, and nothing is relinked to newer evidence.
    A fingerprint verifying is never taken as proof that the source exists.
-C. **Historical evaluation reproducibility.** The record must name the
-   evaluator this code executes, EQUITY_RECOMMENDATION_EVALUATOR_VERSION;
-   any other label is IncompatibleEquityRecommendationRecordError, so a record
-   is never "verified" by replaying it with an evaluator it does not name. The
-   pure ``assess_equity_recommendation_inputs`` -- and through it EI-4B Core --
-   is then re-run on the record's own frozen inputs: the stored policy set, listing
+C. **Historical evaluation reproducibility.** Verification dispatches on the
+   record's evaluator label (ADR-025, N1): it must be one of the closed
+   table's two -- any other is IncompatibleEquityRecommendationRecordError --
+   and its documents must be that evaluator's (N6), so a record is never
+   "verified" by replaying it with an evaluator it does not name, and a
+   version-1 record is never reinterpreted under version-2 rules. The pure
+   ``assess_equity_recommendation_inputs`` -- and through it EI-4B Core -- is
+   then re-run on the record's own frozen inputs, under their own version's
+   history policy (as of ``t`` for version 1, strictly before it for version
+   2): the stored policy set, listing
    eligibility, venue-day evidence and as-of issued-history evidence with its
    completeness and recording watermark. No reference source, venue source or
    history source is consulted. The replayed assessment document and
@@ -43,8 +47,8 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 
 from northstar_application.application_services.equity_recommendation_generation_decoding import (
-    EQUITY_RECOMMENDATION_EVALUATOR_VERSION,
-    IncompatibleEquityRecommendationRecordError,
+    require_paired_equity_recommendation_evaluator,
+    require_supported_equity_recommendation_evaluator,
 )
 from northstar_application.application_services.equity_recommendation_generation_records import (
     EquityRecommendationGenerationDisposition,
@@ -147,12 +151,14 @@ class EquityRecommendationGenerationVerifier:
         """Verify ``disposition`` at levels A to C, or raise the typed failure."""
         if not isinstance(disposition, EquityRecommendationGenerationDisposition):
             raise TypeError("disposition must be an EquityRecommendationGenerationDisposition.")
-        if disposition.evaluator_version != EQUITY_RECOMMENDATION_EVALUATOR_VERSION:
-            raise IncompatibleEquityRecommendationRecordError(
-                f"The record names evaluator {disposition.evaluator_version}; this verifier "
-                f"replays only {EQUITY_RECOMMENDATION_EVALUATOR_VERSION}. Nothing is migrated."
-            )
+        # Dispatch on the recorded label: governed (else Incompatible) and paired with
+        # the frozen inputs' version (else Invalid). Construction already enforced
+        # both; they are re-checked here because replay depends on them.
+        label = require_supported_equity_recommendation_evaluator(disposition.evaluator_version)
         request, inputs = disposition.request, disposition.inputs
+        require_paired_equity_recommendation_evaluator(
+            label, inputs.evaluator_version, "generation inputs"
+        )
         found = establish_equity_recommendation_candidate(request, self._timelines, self._snapshots)
         if isinstance(found, EquityCandidateRefusal):
             if found.reason in _SOURCE_OUTAGES:
@@ -176,6 +182,10 @@ class EquityRecommendationGenerationVerifier:
         replayed = assess_equity_recommendation_inputs(
             request, inputs, observed_timeline_head=found.observed_timeline_head
         )
+        if replayed.evaluator_version != label:
+            raise EquityRecommendationReplayMismatchError(
+                f"The replay ran under {replayed.evaluator_version}, not the recorded {label}."
+            )
         if (
             replayed.assessment_document() != disposition.assessment.document
             or replayed.assessment_fingerprint != disposition.assessment_fingerprint

@@ -291,10 +291,16 @@ class RecordEquityRecommendationGenerationUseCase:
             raise TypeError("disposition must be an EquityRecommendationGenerationDisposition.")
         if not isinstance(attempt, EquityRecommendationGenerationAttempt):
             raise TypeError("attempt must be an EquityRecommendationGenerationAttempt.")
-        if (attempt.generation_key, attempt.assessment_fingerprint, attempt.disposition_kind) != (
+        if (
+            attempt.generation_key,
+            attempt.assessment_fingerprint,
+            attempt.disposition_kind,
+            attempt.evaluator_version,
+        ) != (
             disposition.generation_key,
             disposition.assessment_fingerprint,
             disposition.kind,
+            disposition.evaluator_version,  # an attempt pairs with its own evaluator (N6)
         ):
             raise ValueError("The attempt is not the attempt of this disposition.")
 

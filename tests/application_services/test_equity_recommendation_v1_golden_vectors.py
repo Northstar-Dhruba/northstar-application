@@ -125,6 +125,7 @@ Attempt = EquityRecommendationGenerationAttempt
 # ----------------------------------------------------------------------
 
 _EVALUATOR_V1 = "northstar.equity-recommendation-evaluator/1"
+_EVALUATOR_V2 = "northstar.equity-recommendation-evaluator/2"
 _POLICY_SET_V1 = "northstar.equity-recommendation-policy-set/1"
 _INPUTS_V1 = "northstar.equity-recommendation-generation-inputs/1"
 _ASSESSMENT_V1 = "northstar.equity-recommendation-assessment/1"
@@ -432,7 +433,10 @@ def test_the_golden_fixture_set_is_closed_and_canonically_sorted() -> None:
 
 def test_gv05_version1_labels_formats_prefixes_and_key_namespace_are_pinned() -> None:
     assert EQUITY_RECOMMENDATION_EVALUATOR_VERSION == _EVALUATOR_V1
-    assert SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS == frozenset({_EVALUATOR_V1})
+    # ADR-025 (slices 3a/3b): the closed set is exactly /1 and /2; /1 is unchanged.
+    assert SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS == frozenset(
+        {_EVALUATOR_V1, _EVALUATOR_V2}
+    )
     assert (
         EQUITY_RECOMMENDATION_POLICY_SET_FORMAT,
         EQUITY_RECOMMENDATION_INPUTS_FORMAT,
@@ -452,7 +456,14 @@ def test_gv05_version1_labels_formats_prefixes_and_key_namespace_are_pinned() ->
     assert EQUITY_RECOMMENDATION_GENERATION_KEY_PREFIX == _KEY_PREFIX_V1
     prefixes = dict(EQUITY_RECOMMENDATION_DOCUMENT_PREFIXES)
     assert prefixes.pop("northstar.equity-synthetic-policy-definition/1") == "eipd1-sha256:"
-    assert prefixes == _PREFIX
+    # Every version-1 format keeps its prefix. ADR-025 (N3) adds exactly the three /2
+    # formats, under the same families; no prefix changes.
+    assert {f: p for f, p in prefixes.items() if f in _PREFIX} == _PREFIX
+    assert {f: p for f, p in prefixes.items() if f not in _PREFIX} == {
+        "northstar.equity-recommendation-generation-inputs/2": "eiri1-sha256:",
+        "northstar.equity-recommendation-assessment/2": "eira1-sha256:",
+        "northstar.equity-recommendation-generation-attempt/2": "eirat1-sha256:",
+    }
 
 
 def test_gv05_existing_eirs1_and_eirk1_goldens_are_unchanged() -> None:
@@ -1251,7 +1262,8 @@ def test_neg14_a_tampered_fingerprint_is_refused() -> None:
 
 
 def test_neg_the_unsupported_test_label_stays_unsupported_during_this_module() -> None:
-    # Guards the module's own premise: nothing here widened the supported set.
+    # Guards the module's own premise: the supported set is exactly the closed table.
     assert decoding_module.SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS == frozenset(
-        {_EVALUATOR_V1}
+        {_EVALUATOR_V1, _EVALUATOR_V2}
     )
+    assert ei4d._FUTURE not in decoding_module.SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS

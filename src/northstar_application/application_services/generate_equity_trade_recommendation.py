@@ -86,6 +86,29 @@ PRE_ENTRY_INVALIDATION, CORPORATE_ACTIONS, EXCHANGE_SURVEILLANCE and
 CANDLE_REVISION_MATERIALITY are always NOT_ASSESSED: their policies or inputs
 do not exist, and a proposal names them as blocking actionable issuance.
 
+Evaluator versions (ADR-025)
+----------------------------
+The use case runs exactly one governed evaluator, chosen at construction by
+the keyword-only ``evaluator_version`` and defaulting to version 1 (N7); it
+is never inferred or upgraded. The versions differ only in the issued-history
+step, with ``t`` the modeled issuance:
+
+- **Version 1** reads the history as of ``t`` and needs it complete at least
+  through ``t``; otherwise RECOMMENDATION_HISTORY_INCOMPLETE.
+- **Version 2** reads it as of ``b = t - 1 us`` -- strictly before issuance --
+  and needs it complete *exactly* through ``b`` (N10): before ``b`` is
+  RECOMMENDATION_HISTORY_INCOMPLETE (case B); beyond ``b`` is
+  RECOMMENDATION_HISTORY_BOUNDARY_EXCEEDED (case C, owner approved
+  2026-11-13), permanent for that ``t`` and never reported by version 1. Both
+  are DEPENDENCY_UNAVAILABLE, reached while gathering, so no inputs, no
+  generation key and no disposition exist: the attempt is keyless and the key
+  is never consumed. A missing, unreadable or foreign record is
+  OPEN_RECOMMENDATION_STATE_UNAVAILABLE under either version (case D).
+
+Everything after the history step -- timing, eligibility, open
+recommendations and Core formation -- is shared and unchanged; only the
+frozen inputs, assessment and attempt carry the version's formats.
+
 Failure semantics
 -----------------
 Expected outages of the injected ports -- the timeline store, the snapshot
@@ -130,13 +153,17 @@ from northstar_application.application_services.equity_candle_evidence_snapshot 
     EquityCandleEvidenceClass,
 )
 from northstar_application.application_services.equity_recommendation_generation_evidence import (
+    EQUITY_RECOMMENDATION_EVALUATOR_V1,
+    EQUITY_RECOMMENDATION_STRICTLY_BEFORE_ISSUANCE,
     EquityIssuedHistoryEvidence,
     EquityRecommendationCandidateProvenance,
     EquityRecommendationInputs,
     EquityResolvedSyntheticPolicySet,
     EquityVenueDayEvidence,
     InvalidEquityRecommendationEvidenceError,
+    equity_history_boundary,
     equity_modeled_issuance,
+    equity_recommendation_evaluator,
 )
 from northstar_application.application_services.equity_synthetic_policy_bindings import (
     EquitySyntheticPolicyType,
@@ -256,6 +283,7 @@ def _audit(
     core_outcome: object = None,
     proposal: EquityTradeRecommendationProposal | None = None,
     observed_timeline_head: str | None = None,
+    evaluator_version: str = EQUITY_RECOMMENDATION_EVALUATOR_V1,
 ) -> EquityRecommendationEligibilityAudit:
     unassessed = dict(EQUITY_RECOMMENDATION_UNASSESSED_CONTROLS)
     checks = []
@@ -281,6 +309,7 @@ def _audit(
         core_outcome=core_outcome,  # type: ignore[arg-type]
         proposal=proposal,
         observed_timeline_head=observed_timeline_head,
+        evaluator_version=evaluator_version,
     )
 
 
@@ -314,6 +343,8 @@ class GenerateEquityTradeRecommendationUseCase:
         listing_eligibility: EquitySyntheticListingEligibilitySource,
         session_history: EquitySessionRecommendationHistorySource,
         policy_catalog: EquitySyntheticPolicyCatalogStore,
+        *,
+        evaluator_version: str = EQUITY_RECOMMENDATION_EVALUATOR_V1,
     ) -> None:
         for value, kind, name in (
             (timelines, EquityIntradayResearchTimelineStore, "timelines"),
@@ -333,6 +364,13 @@ class GenerateEquityTradeRecommendationUseCase:
         self._eligibility = listing_eligibility
         self._history = session_history
         self._catalog = policy_catalog
+        # N7: explicit, closed, defaulting to version 1; never inferred or upgraded.
+        self._evaluator = equity_recommendation_evaluator(evaluator_version)
+
+    @property
+    def evaluator_version(self) -> str:
+        """Return the governed evaluator this use case runs."""
+        return self._evaluator.version
 
     def execute(
         self, request: EquityTradeRecommendationRequest
@@ -349,6 +387,7 @@ class GenerateEquityTradeRecommendationUseCase:
                         _CHECK.AUTHORITATIVE_CANDIDATE, candidate
                     )
                 },
+                evaluator_version=self.evaluator_version,
             )
         inputs = self._inputs(request, candidate.provenance)
         if isinstance(inputs, _Failed):
@@ -362,6 +401,7 @@ class GenerateEquityTradeRecommendationUseCase:
                 },
                 candidate=candidate.provenance,
                 observed_timeline_head=candidate.timeline_head,
+                evaluator_version=self.evaluator_version,
             )
         return assess_equity_recommendation_inputs(
             request, inputs, observed_timeline_head=candidate.timeline_head
@@ -461,10 +501,14 @@ class GenerateEquityTradeRecommendationUseCase:
         eligibility = self._listing_reference(request, found)
         history = None
         if isinstance(timing, EquitySyntheticEntryTimingPolicy):
-            as_of = equity_modeled_issuance(
+            issued = equity_modeled_issuance(
                 candidate.source.decision_as_of, timing.modeled_issuance_latency
             )
-            history = self._session_history(request, as_of, found)
+            history = (
+                self._history_before(request, issued, found)
+                if self._evaluator.strictly_before_issuance
+                else self._session_history(request, issued, found)
+            )
         if found:
             return _collect(found)
         assert resolved is not None and history is not None
@@ -474,6 +518,7 @@ class GenerateEquityTradeRecommendationUseCase:
             listing_eligibility=eligibility,  # type: ignore[arg-type]
             venue_day=venue,  # type: ignore[arg-type]
             issued_history=history,
+            evaluator_version=self.evaluator_version,
         )
 
     def _published(self, resolved: EquityResolvedSyntheticPolicySet, found: _Found) -> None:
@@ -566,9 +611,11 @@ class GenerateEquityTradeRecommendationUseCase:
             return None
         return answer
 
-    def _session_history(
+    def _answered_history(
         self, request: EquityTradeRecommendationRequest, as_of: PointInTime, found: _Found
-    ) -> EquityIssuedHistoryEvidence | None:
+    ) -> EquitySessionRecommendationHistory | None:
+        """Read the session's issued history as of ``as_of``; a missing, unreadable or
+        foreign record is OPEN_RECOMMENDATION_STATE_UNAVAILABLE (N10 case D)."""
         exchange, day = request.listing.exchange_code, request.trading_date
         try:
             history = self._history.session_history(exchange, day, as_of)
@@ -599,6 +646,54 @@ class GenerateEquityTradeRecommendationUseCase:
                     "The session recommendation record answered another session.",
                 )
             )
+            return None
+        return history
+
+    def _history_before(
+        self, request: EquityTradeRecommendationRequest, issued: PointInTime, found: _Found
+    ) -> EquityIssuedHistoryEvidence | None:
+        """Version 2 (N8, N10): the history strictly before ``t``, complete exactly through b.
+
+        ``b = t - 1 us``. Complete only before ``b`` is case B; declared beyond
+        ``b`` is case C, which nothing can later repair, because a completeness
+        declaration never decreases. Only exactly ``b`` (case A) is frozen.
+        """
+        boundary = equity_history_boundary(issued)
+        history = self._answered_history(request, boundary, found)
+        if history is None:
+            return None
+        relation = history.complete_through.compare(boundary)
+        if relation < 0:
+            found.append(
+                (
+                    _R.RECOMMENDATION_HISTORY_INCOMPLETE,
+                    f"The session recommendation record {history.reference} is complete only "
+                    f"through {history.complete_through}, before {boundary}, the instant "
+                    f"strictly before the modeled issuance {issued}.",
+                )
+            )
+            return None
+        if relation > 0:
+            found.append(
+                (
+                    _R.RECOMMENDATION_HISTORY_BOUNDARY_EXCEEDED,
+                    f"The session recommendation record {history.reference} is declared "
+                    f"complete through {history.complete_through}, beyond {boundary}, the "
+                    f"instant strictly before the modeled issuance {issued}: an issuance at "
+                    "that instant can no longer be made, and no declaration is reversed.",
+                )
+            )
+            return None
+        return EquityIssuedHistoryEvidence.as_of_view(
+            history, boundary, history_boundary=EQUITY_RECOMMENDATION_STRICTLY_BEFORE_ISSUANCE
+        )
+
+    def _session_history(
+        self, request: EquityTradeRecommendationRequest, as_of: PointInTime, found: _Found
+    ) -> EquityIssuedHistoryEvidence | None:
+        """Version 1: the history as of the modeled issuance ``t``, complete at least through it."""
+        history = self._answered_history(request, as_of, found)
+        if history is None:
             return None
         if not history.covers(as_of):
             found.append(
@@ -824,6 +919,7 @@ def assess_equity_recommendation_inputs(
             candidate=candidate,
             inputs=inputs,
             observed_timeline_head=observed_timeline_head,
+            evaluator_version=inputs.evaluator_version,  # the version the inputs were frozen for
             **found,  # type: ignore[arg-type]
         )
 

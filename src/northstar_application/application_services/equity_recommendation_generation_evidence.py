@@ -22,6 +22,18 @@ is SHA-256 over that encoding, prefixed by its format's namespace:
 The last is the EI4-D10 component policy binding (ADR-022, section 3), defined
 in equity_synthetic_policy_bindings; it never enters a generation record.
 
+Two evaluator versions (ADR-025)
+--------------------------------
+``EQUITY_RECOMMENDATION_EVALUATORS`` is the closed table of the two governed
+evaluators. Version 1 keeps every document above. Version 2 uses
+``generation-inputs/2``, ``assessment/2`` and ``generation-attempt/2`` under
+the same ``eiri1``, ``eira1`` and ``eirat1`` prefixes -- a prefix names a
+family; the format, inside the preimage, names the version -- and keeps the
+proposal, policy set, Core outcome and generation key at ``/1``. The only
+difference in content is the issued history: version 2 reads it as of
+``b = t - 1 us``, states ``history_boundary`` and requires it complete exactly
+through ``b``.
+
 Free-text diagnostics -- check details, port exception messages, a venue
 reference's reason -- are never part of these documents, so they never move a
 fingerprint. ``verify_equity_recommendation_document`` decodes a stored
@@ -119,7 +131,19 @@ EQUITY_RECOMMENDATION_GENERATION_KEY_PREFIX = "eirk1-sha256:"
 # EI4-D10 (ADR-022): the canonical binding of one published synthetic policy definition.
 EQUITY_SYNTHETIC_POLICY_DEFINITION_FORMAT = "northstar.equity-synthetic-policy-definition/1"
 
-# The fingerprint namespace of every identity-bearing document format.
+# ADR-025: the version-2 documents. Proposal, policy set, Core outcome and the
+# generation key keep their /1 formats under both evaluators.
+EQUITY_RECOMMENDATION_INPUTS_FORMAT_V2 = "northstar.equity-recommendation-generation-inputs/2"
+EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT_V2 = "northstar.equity-recommendation-assessment/2"
+EQUITY_RECOMMENDATION_ATTEMPT_FORMAT_V2 = "northstar.equity-recommendation-generation-attempt/2"
+# The canonical value of a version-2 ``issued_history.history_boundary`` (N8).
+EQUITY_RECOMMENDATION_STRICTLY_BEFORE_ISSUANCE = "STRICTLY_BEFORE_MODELED_ISSUANCE"
+
+EQUITY_RECOMMENDATION_EVALUATOR_V1 = "northstar.equity-recommendation-evaluator/1"
+EQUITY_RECOMMENDATION_EVALUATOR_V2 = "northstar.equity-recommendation-evaluator/2"
+
+# The fingerprint namespace of every identity-bearing document format. A prefix
+# names a family, never a version: the format inside the preimage does (N3).
 EQUITY_RECOMMENDATION_DOCUMENT_PREFIXES = MappingProxyType(
     {
         EQUITY_RECOMMENDATION_POLICY_SET_FORMAT: "eirs1-sha256:",
@@ -128,11 +152,70 @@ EQUITY_RECOMMENDATION_DOCUMENT_PREFIXES = MappingProxyType(
         EQUITY_RECOMMENDATION_PROPOSAL_FORMAT: "eirp1-sha256:",
         EQUITY_RECOMMENDATION_ATTEMPT_FORMAT: "eirat1-sha256:",
         EQUITY_SYNTHETIC_POLICY_DEFINITION_FORMAT: "eipd1-sha256:",
+        EQUITY_RECOMMENDATION_INPUTS_FORMAT_V2: "eiri1-sha256:",
+        EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT_V2: "eira1-sha256:",
+        EQUITY_RECOMMENDATION_ATTEMPT_FORMAT_V2: "eirat1-sha256:",
     }
 )
 
+
+@dataclass(frozen=True, slots=True)
+class EquityRecommendationEvaluator:
+    """One row of the closed evaluator table (ADR-025, N1): a label and its documents.
+
+    ``strictly_before_issuance`` is the history policy: version 1 reads the
+    issued history as of the modeled issuance ``t``; version 2 as of
+    ``b = t - 1 us``, declared complete exactly through ``b`` (N8, N10).
+    """
+
+    version: str
+    inputs_format: str
+    assessment_format: str
+    attempt_format: str
+    strictly_before_issuance: bool
+
+
+# The closed evaluator table. No registration: a third version needs governance.
+EQUITY_RECOMMENDATION_EVALUATORS = MappingProxyType(
+    {
+        EQUITY_RECOMMENDATION_EVALUATOR_V1: EquityRecommendationEvaluator(
+            EQUITY_RECOMMENDATION_EVALUATOR_V1,
+            EQUITY_RECOMMENDATION_INPUTS_FORMAT,
+            EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT,
+            EQUITY_RECOMMENDATION_ATTEMPT_FORMAT,
+            strictly_before_issuance=False,
+        ),
+        EQUITY_RECOMMENDATION_EVALUATOR_V2: EquityRecommendationEvaluator(
+            EQUITY_RECOMMENDATION_EVALUATOR_V2,
+            EQUITY_RECOMMENDATION_INPUTS_FORMAT_V2,
+            EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT_V2,
+            EQUITY_RECOMMENDATION_ATTEMPT_FORMAT_V2,
+            strictly_before_issuance=True,
+        ),
+    }
+)
+
+
+def equity_recommendation_evaluator(version: object) -> EquityRecommendationEvaluator:
+    """Return the governed evaluator ``version`` names; refuse any other value.
+
+    For selecting an evaluator to run. Stored records are classified by the
+    decoders instead (Incompatible for an unknown label, Invalid for none).
+    """
+    if not isinstance(version, str):
+        raise TypeError("An evaluator version is text.")
+    evaluator = EQUITY_RECOMMENDATION_EVALUATORS.get(version)
+    if evaluator is None:
+        raise ValueError(
+            f"{version!r} is not a governed evaluator version; the closed set is "
+            f"{', '.join(EQUITY_RECOMMENDATION_EVALUATORS)}."
+        )
+    return evaluator
+
+
 _FIVE_MINUTES = timedelta(minutes=5)
 _ONE_MINUTE = timedelta(minutes=1)
+_ONE_MICROSECOND = timedelta(microseconds=1)
 _HEX = frozenset("0123456789abcdef")
 
 
@@ -246,8 +329,13 @@ def _datetime(instant: PointInTime) -> datetime:
 
 
 def _exact_point(value: datetime) -> PointInTime:
-    # Microseconds are written out in full; PointInTime canonicalizes them.
-    return PointInTime(value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
+    # Microseconds are written out in full; PointInTime canonicalizes them. Explicit
+    # field widths, not strftime("%Y"): glibc does not zero-pad years below 1000.
+    utc = value.astimezone(UTC)
+    return PointInTime(
+        f"{utc.year:04d}-{utc.month:02d}-{utc.day:02d}"
+        f"T{utc.hour:02d}:{utc.minute:02d}:{utc.second:02d}.{utc.microsecond:06d}Z"
+    )
 
 
 def equity_modeled_issuance(decision_as_of: PointInTime, latency: timedelta) -> PointInTime:
@@ -260,6 +348,20 @@ def equity_modeled_issuance(decision_as_of: PointInTime, latency: timedelta) -> 
     if not isinstance(latency, timedelta) or latency < timedelta(0):
         _evidence("The modeled issuance latency must be a non-negative timedelta.")
     return _exact_point(_datetime(decision_as_of) + latency)
+
+
+def equity_history_boundary(modeled_issued_at: PointInTime) -> PointInTime:
+    """Return ``b = t - 1 us``: the last representable instant strictly before ``t`` (N8).
+
+    Integer microsecond arithmetic on the existing PointInTime resolution; no
+    clock and no float. The version-2 issued history is read as of ``b``.
+    """
+    if not isinstance(modeled_issued_at, PointInTime):
+        raise TypeError("modeled_issued_at must be a PointInTime.")
+    try:
+        return _exact_point(_datetime(modeled_issued_at) - _ONE_MICROSECOND)
+    except (OverflowError, ValueError) as exc:
+        _evidence(f"No representable instant precedes {modeled_issued_at}: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +711,11 @@ class EquityIssuedHistoryEvidence:
     record's completeness instant and recording position, so the same view can
     be requested and verified again. Records issued after ``as_of`` are not
     part of the evidence.
+
+    ``history_boundary`` is None for version 1, whose ``as_of`` is the modeled
+    issuance ``t`` and which never states the field. Version 2 states
+    EQUITY_RECOMMENDATION_STRICTLY_BEFORE_ISSUANCE: ``as_of`` is then
+    ``b = t - 1 us`` and the record is declared complete exactly through it.
     """
 
     exchange_code: ExchangeCode
@@ -618,8 +725,12 @@ class EquityIssuedHistoryEvidence:
     complete_through: PointInTime
     recording_watermark: int
     recommendations: tuple[EquityPriorSessionRecommendation, ...]
+    history_boundary: str | None = None
 
     def __post_init__(self) -> None:
+        boundary = self.history_boundary
+        if boundary is not None and boundary != EQUITY_RECOMMENDATION_STRICTLY_BEFORE_ISSUANCE:
+            _evidence(f"Issued-history evidence states an unknown history boundary {boundary!r}.")
         if not isinstance(self.exchange_code, ExchangeCode):
             _evidence("Issued-history evidence needs an ExchangeCode.")
         if isinstance(self.trading_date, datetime) or not isinstance(self.trading_date, date):
@@ -655,10 +766,16 @@ class EquityIssuedHistoryEvidence:
             _evidence("Issued-history evidence keys and recording sequences are distinct.")
         if list(records) != sorted(records, key=_issued_order):
             _evidence("Issued-history evidence is in ascending (issued_at, key) order.")
+        if boundary is not None and self.complete_through != self.as_of:
+            _evidence("Strictly-before evidence must be complete exactly through its as-of.")
 
     @classmethod
     def as_of_view(
-        cls, history: EquitySessionRecommendationHistory, as_of: PointInTime
+        cls,
+        history: EquitySessionRecommendationHistory,
+        as_of: PointInTime,
+        *,
+        history_boundary: str | None = None,
     ) -> EquityIssuedHistoryEvidence:
         """Freeze ``history``'s point-in-time view at ``as_of``, which it must cover."""
         if not isinstance(history, EquitySessionRecommendationHistory):
@@ -673,11 +790,12 @@ class EquityIssuedHistoryEvidence:
             complete_through=history.complete_through,
             recording_watermark=history.recording_watermark,
             recommendations=history.issued_by(as_of),
+            history_boundary=history_boundary,
         )
 
     def document(self) -> dict[str, Any]:
-        """Return the canonical content."""
-        return {
+        """Return the canonical content. Version 1 never states ``history_boundary``."""
+        document: dict[str, Any] = {
             "exchange_code": self.exchange_code.value,
             "trading_date": self.trading_date.isoformat(),
             "reference": self.reference,
@@ -686,6 +804,9 @@ class EquityIssuedHistoryEvidence:
             "recording_watermark": self.recording_watermark,
             "recommendations": [record.document() for record in self.recommendations],
         }
+        if self.history_boundary is not None:
+            document["history_boundary"] = self.history_boundary
+        return document
 
 
 # ---------------------------------------------------------------------------
@@ -699,8 +820,15 @@ class EquityRecommendationInputs:
 
     The envelope is consistent: one listing, date and venue throughout; the
     venue-day evidence is the venue reference the candidate's snapshot used;
-    and the issued-history evidence is taken as of the modeled issuance the
-    policy set's timing policy derives from the candidate's decision instant.
+    and the issued-history evidence is taken at the instant the evaluator's
+    history policy derives from the modeled issuance ``t`` -- itself derived
+    from the candidate's decision instant and the timing policy's latency.
+
+    ``evaluator_version`` selects the row of the closed evaluator table, and so
+    the document format: version 1 (the default) takes the history as of
+    ``t``, with no boundary field; version 2 as of ``b = t - 1 us``, stating
+    the strictly-before boundary and complete exactly through ``b`` (N8, N10).
+    The label itself is never part of the document: its format is.
     """
 
     candidate: EquityRecommendationCandidateProvenance
@@ -711,8 +839,12 @@ class EquityRecommendationInputs:
     modeled_issued_at: PointInTime = field(init=False)
     generation_key: str = field(init=False)
     fingerprint: str = field(init=False)
+    evaluator_version: str = field(default=EQUITY_RECOMMENDATION_EVALUATOR_V1, kw_only=True)
 
     def __post_init__(self) -> None:
+        evaluator = EQUITY_RECOMMENDATION_EVALUATORS.get(self.evaluator_version)  # type: ignore[call-overload]
+        if evaluator is None:
+            _evidence(f"{self.evaluator_version!r} is not a governed evaluator version.")
         for name, kind in (
             ("candidate", EquityRecommendationCandidateProvenance),
             ("policy_set", EquityResolvedSyntheticPolicySet),
@@ -738,8 +870,21 @@ class EquityRecommendationInputs:
         issued = equity_modeled_issuance(
             source.decision_as_of, self.policy_set.timing_policy.modeled_issuance_latency
         )
-        if self.issued_history.as_of != issued:
-            _evidence("The issued history must be taken as of the derived modeled issuance.")
+        history = self.issued_history
+        if not evaluator.strictly_before_issuance:
+            if history.history_boundary is not None:
+                _evidence("Version-1 issued history states no history boundary.")
+            if history.as_of != issued:
+                _evidence("The issued history must be taken as of the derived modeled issuance.")
+        else:
+            boundary = equity_history_boundary(issued)
+            if history.history_boundary != EQUITY_RECOMMENDATION_STRICTLY_BEFORE_ISSUANCE:
+                _evidence("Version-2 issued history must state the strictly-before boundary.")
+            if history.as_of != boundary or history.complete_through != boundary:
+                _evidence(
+                    "Version-2 issued history must be taken as of, and complete exactly "
+                    "through, the instant strictly before the derived modeled issuance."
+                )
         object.__setattr__(self, "modeled_issued_at", issued)
         object.__setattr__(
             self, "generation_key", equity_recommendation_generation_key(source, self.policy_set)
@@ -757,7 +902,7 @@ class EquityRecommendationInputs:
     def document(self) -> dict[str, Any]:
         """Return the canonical content."""
         return {
-            "format": EQUITY_RECOMMENDATION_INPUTS_FORMAT,
+            "format": EQUITY_RECOMMENDATION_EVALUATORS[self.evaluator_version].inputs_format,
             "candidate": self.candidate.document(),
             "policy_set": self.policy_set.document(),
             "policy_set_fingerprint": self.policy_set.fingerprint,

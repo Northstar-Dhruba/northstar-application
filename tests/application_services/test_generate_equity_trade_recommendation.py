@@ -797,8 +797,12 @@ class _Ports:
         self.state = _State()
         self.catalog = _Catalog()
         self.publish = True
+        self.evaluator_version: str | None = None  # None: the use case's default (/1)
 
     def use_case(self) -> GenerateEquityTradeRecommendationUseCase:
+        selection = (
+            {} if self.evaluator_version is None else {"evaluator_version": self.evaluator_version}
+        )
         return GenerateEquityTradeRecommendationUseCase(
             self.world.timelines,
             self.world.snapshots,
@@ -807,6 +811,7 @@ class _Ports:
             self.eligibility,
             self.state,
             self.catalog,
+            **selection,
         )
 
     def publish_policies(
@@ -2003,6 +2008,24 @@ def _proposed() -> tuple[_Ports, EquityRecommendationEligibilityAudit]:
     return ports_, audit
 
 
+# ADR-025 version 2: t = 09:36 IST, so b = t - 1 us. A version-2 PROPOSED needs the
+# issued history declared complete exactly through b (N10, case A).
+_V2 = "northstar.equity-recommendation-evaluator/2"
+_B = PointInTime("2026-08-12T04:05:59.999999Z")
+
+
+def _proposed_v2(
+    ports_: _Ports | None = None,
+) -> tuple[_Ports, EquityRecommendationEligibilityAudit]:
+    """The default scenario under evaluator version 2, history complete exactly through b."""
+    ports_ = ports_ or _ports()
+    ports_.evaluator_version = _V2
+    ports_.state.answer = _history(through=_B)
+    audit = ports_.run()
+    assert audit.status is _S.PROPOSED and audit.inputs is not None, audit.reasons
+    return ports_, audit
+
+
 # -- A-D: composite policy-set identity ---------------------------------
 
 
@@ -2172,7 +2195,8 @@ def test_compat_i_stable_reason_codes_are_identity_bearing() -> None:
     "document",
     [
         {"status": "PROPOSED"},
-        {"format": "northstar.equity-recommendation-assessment/2", "status": "PROPOSED"},
+        # /9: an unapproved version (ADR-025 approves assessment/2).
+        {"format": "northstar.equity-recommendation-assessment/9", "status": "PROPOSED"},
         {"format": "northstar.equity-recommendation-eligibility-audit/2"},
     ],
 )

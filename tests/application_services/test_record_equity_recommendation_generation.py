@@ -372,7 +372,7 @@ def test_d_aj_unsupported_formats_and_evaluators_are_incompatible_not_migrated()
     disposition = equity_recommendation_disposition(audit)
     assert disposition is not None
     future = json.loads(disposition.assessment_document)
-    future["format"] = "northstar.equity-recommendation-assessment/2"
+    future["format"] = "northstar.equity-recommendation-assessment/9"  # /2 is approved (ADR-025)
     text = canonical_equity_recommendation_json(future)
     with pytest.raises(IncompatibleEquityRecommendationRecordError, match="Nothing is migrated"):
         decode_equity_recommendation_assessment(text, disposition.assessment_fingerprint)
@@ -1108,42 +1108,48 @@ def test_contracts_are_validated_and_exported() -> None:
 
 
 # ----------------------------------------------------------------------
-# Evaluator-version integrity
+# Evaluator-version integrity (ADR-025)
 #
 # No fingerprint covers ``evaluator_version``: eira1 and eirp1 are over the
-# assessment and proposal documents only, unchanged. The evaluator is bound by
-# (1) construction, which accepts only a supported version; (2) whole-record
-# equality, which compares it, in every equivalence decision; and (3) the
-# verifier, which replays only the evaluator a record names. Only one
-# evaluator exists, so a second *supported* label is simulated below by
-# widening the supported set, test-only. No second evaluator is executed.
+# documents only. The evaluator is bound by (1) construction, which accepts
+# only a governed label paired with its own document formats (N6); (2)
+# whole-record equality, which compares it, in every equivalence decision; and
+# (3) the verifier, which dispatches on the label it names (N1).
 #
-# ADR-025 approves northstar.equity-recommendation-evaluator/2, so that label
-# can no longer stand for an unknown evaluator (EI-4C slice 1, TH-01). This
-# deliberately unsupported label is outside the governed set (/1 and /2) and
-# is used nowhere in production (TH-03).
+# These tests once simulated a second *supported* label by monkeypatching the
+# supported set and relabelling version-1 documents. Pairing makes that record
+# unconstructible, and evaluator /2 now exists: the cross-version tests below
+# use a genuine version-2 record of the same candidate and policy set -- the
+# same eirk1, since the key names no evaluator (N5). _FUTURE is a deliberately
+# unsupported label outside the governed set (/1, /2), used nowhere in
+# production (TH-01, TH-03).
 # ----------------------------------------------------------------------
 
 _FUTURE = "northstar.equity-recommendation-evaluator/999"
+_V2 = ei4c._V2
 
 
-@pytest.fixture
-def _second_label(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test-only: admit a second evaluator label to construction, never to replay."""
-    monkeypatch.setattr(
-        decoding_module,
-        "SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS",
-        frozenset({EQUITY_RECOMMENDATION_EVALUATOR_VERSION, _FUTURE}),
-    )
-
-
-def _current_and_relabelled() -> tuple[
-    ei4c._Ports, EquityRecommendationEligibilityAudit, Disposition, Disposition
+def _both_versions() -> tuple[
+    ei4c._Ports,
+    EquityRecommendationEligibilityAudit,
+    Disposition,
+    EquityRecommendationEligibilityAudit,
+    Disposition,
 ]:
-    ports_, audit = ei4c._proposed()
-    current = equity_recommendation_disposition(audit)
-    assert current is not None
-    return ports_, audit, current, _rebuilt(current, evaluator_version=_FUTURE)
+    """A version-1 and a version-2 PROPOSED disposition of the same request, in one world."""
+    ports_, first = ei4c._proposed()
+    v1 = equity_recommendation_disposition(first)
+    _, second = ei4c._proposed_v2(ports_)
+    v2 = equity_recommendation_disposition(second)
+    assert v1 is not None and v2 is not None
+    assert (v1.evaluator_version, v2.evaluator_version) == (
+        EQUITY_RECOMMENDATION_EVALUATOR_VERSION,
+        _V2,
+    )
+    assert v1.generation_key == v2.generation_key  # one key: the key names no evaluator
+    assert v1.proposal_document == v2.proposal_document  # proposal /1, history-independent
+    assert v1.assessment_fingerprint != v2.assessment_fingerprint  # assessment /1 vs /2
+    return ports_, first, v1, second, v2
 
 
 def test_evaluator_1_same_key_content_and_evaluator_are_equivalent() -> None:
@@ -1162,23 +1168,24 @@ def test_evaluator_1_same_key_content_and_evaluator_are_equivalent() -> None:
     )
 
 
-@pytest.mark.usefixtures("_second_label")
-def test_evaluator_2_equal_fingerprints_under_another_evaluator_are_not_equivalent() -> None:
-    ports_, audit, current, relabelled = _current_and_relabelled()
-    # The fingerprints do not cover the evaluator, and the records are still unequal.
-    assert relabelled.assessment_fingerprint == current.assessment_fingerprint
-    assert relabelled.proposal_fingerprint == current.proposal_fingerprint
-    assert relabelled.assessment_document == current.assessment_document
-    assert relabelled != current
+@pytest.mark.parametrize("stored_first", ["/1", "/2"])
+def test_evaluator_2_a_same_key_record_of_the_other_evaluator_is_never_adopted(
+    stored_first: str,
+) -> None:
+    ports_, v1_audit, v1, v2_audit, v2 = _both_versions()
+    stored, offered = (v1, v2_audit) if stored_first == "/1" else (v2, v1_audit)
     store = _Store()
-    store.dispositions[current.generation_key] = relabelled
-    result = _recorder(ports_, store).execute(audit)
+    store.dispositions[stored.generation_key] = stored
+    result = _recorder(ports_, store).execute(offered)
+    # N5: the first record is preserved, not adopted, not reclassified as CONTENT_CONFLICT.
     assert result.outcome is _O.EVALUATOR_VERSION_CONFLICT and not result.is_stored
     assert result.authoritative is None  # never adopted, never replayed
-    assert "identical" in result.detail
-    # No second disposition: the stored record is untouched; the attempt is audited.
-    assert store.dispositions == {current.generation_key: relabelled}
+    assert store.dispositions == {stored.generation_key: stored}
+    # The competing evaluator's attempt is audited, in its own version's format.
     assert result.attempt_recorded is True
+    competing = equity_recommendation_attempt(offered)
+    assert store.attempts[competing.attempt_identity] == competing
+    assert competing.evaluator_version == offered.evaluator_version
 
 
 def test_evaluator_3_an_unsupported_evaluator_is_incompatible_and_fails_closed() -> None:
@@ -1213,37 +1220,51 @@ def test_evaluator_5_unconfirmed_commit_with_the_same_evaluator_reconciles() -> 
     assert store.dispositions[audit.generation_key] == result.disposition
 
 
-@pytest.mark.usefixtures("_second_label")
 def test_evaluator_6_unconfirmed_commit_finding_another_evaluator_is_not_committed() -> None:
-    ports_, audit, current, relabelled = _current_and_relabelled()
+    ports_, _, v1, v2_audit, _ = _both_versions()
     store = _Store()
     store.script = ["lost_before"]
-    store.before_load.append(
-        lambda: store.dispositions.__setitem__(current.generation_key, relabelled)
-    )
-    result = _recorder(ports_, store).execute(audit)
+    # A competing version-1 writer commits first; the version-2 commit is unconfirmed.
+    store.before_load.append(lambda: store.dispositions.__setitem__(v1.generation_key, v1))
+    result = _recorder(ports_, store).execute(v2_audit)
     assert result.outcome is _O.EVALUATOR_VERSION_CONFLICT and result.reconciled
     assert not result.is_stored and result.authoritative is None
+    assert store.dispositions == {v1.generation_key: v1}
     # An unsupported stored evaluator on reload leaves the outcome unresolved.
     store = _Store()
     store.script = ["lost_after"]
     store.load_failure = "incompatible"
-    unresolved = _recorder(ports_, store).execute(audit)
+    unresolved = _recorder(ports_, store).execute(v2_audit)
     assert unresolved.outcome is _O.COMMIT_RECONCILIATION_UNRESOLVED
 
 
-@pytest.mark.usefixtures("_second_label")
 def test_evaluator_7_replay_requires_the_evaluator_the_record_names() -> None:
-    ports_, _, current, relabelled = _current_and_relabelled()
-    assert _verifier(ports_).verify(current).evaluation_reproduced
-    with pytest.raises(IncompatibleEquityRecommendationRecordError, match="replays only"):
-        _verifier(ports_).verify(relabelled)
+    ports_, _, v1, _, v2 = _both_versions()
+    # Each record replays under its own evaluator, never the other's.
+    for record, label in ((v1, EQUITY_RECOMMENDATION_EVALUATOR_VERSION), (v2, _V2)):
+        verified = _verifier(ports_).verify(record)
+        assert verified.evaluation_reproduced
+        assert verified.replayed.evaluator_version == label
+        assert verified.replayed.assessment_fingerprint == record.assessment_fingerprint
+    # A known label over the other version's documents never constructs: Invalid (N6).
+    for record, label in ((v1, _V2), (v2, EQUITY_RECOMMENDATION_EVALUATOR_VERSION)):
+        with pytest.raises(InvalidEquityRecommendationRecordError, match="do not pair") as raised:
+            _rebuilt(record, evaluator_version=label)
+        assert not isinstance(raised.value, IncompatibleEquityRecommendationRecordError)
+    # An unknown stored label is Incompatible through the stored-record use case.
     store = _Store()
-    store.dispositions[current.generation_key] = relabelled
+    store.load_failure = "incompatible"
     with pytest.raises(IncompatibleEquityRecommendationRecordError):
         VerifyStoredEquityRecommendationGenerationUseCase(store, _verifier(ports_)).execute(
-            current.generation_key
+            v1.generation_key
         )
+    for record in (v1, v2):
+        store = _Store()
+        store.dispositions[record.generation_key] = record
+        reloaded = VerifyStoredEquityRecommendationGenerationUseCase(
+            store, _verifier(ports_)
+        ).execute(record.generation_key)
+        assert reloaded is not None and reloaded.disposition == record
 
 
 def test_evaluator_8_the_unsupported_test_label_is_outside_the_governed_set() -> None:

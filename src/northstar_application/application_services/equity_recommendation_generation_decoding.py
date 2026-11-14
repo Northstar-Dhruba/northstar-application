@@ -21,10 +21,21 @@ for another evaluator, and nothing here migrates it. Every other defect
 raises InvalidEquityRecommendationRecordError. Nothing is reconstructed from
 today's reference sources.
 
-``EQUITY_RECOMMENDATION_EVALUATOR_VERSION`` names the evaluation behaviour --
-the EI-4C assessment and the EI-4B Core formation -- that produced a record.
-As with EI3-D13, there is no historical evaluator registry: only the current
-version is supported, and any other fails closed.
+An evaluator label names the evaluation behaviour -- the EI-4C assessment and
+the EI-4B Core formation -- that produced a record. ADR-025 governs exactly
+two, in one closed table (EQUITY_RECOMMENDATION_EVALUATORS, N1): no
+registration, no plugin, no inference from a prefix.
+
+Label-format pairing (N6)
+-------------------------
+The generation inputs, assessment and attempt each state a format, and each
+format belongs to exactly one evaluator: ``…/1`` to version 1, ``…/2`` to
+version 2. A record pairs its label with exactly that evaluator's formats,
+and an assessment embeds inputs of its own version. Within a known family an
+unknown version (``…/9``) is Incompatible; a known version under the wrong
+label, or nested under the wrong version, is Invalid. An unknown label is
+Incompatible, and a missing or empty one Invalid. The proposal, policy set,
+Core outcome and generation key are ``/1`` under both evaluators.
 """
 
 from __future__ import annotations
@@ -67,9 +78,10 @@ from northstar_core.recommendations.equity import (
 from northstar_core.strategy import StrategyIdentity
 
 from northstar_application.application_services.equity_recommendation_generation_evidence import (
-    EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT,
     EQUITY_RECOMMENDATION_CORE_OUTCOME_FORMAT,
-    EQUITY_RECOMMENDATION_INPUTS_FORMAT,
+    EQUITY_RECOMMENDATION_EVALUATOR_V1,
+    EQUITY_RECOMMENDATION_EVALUATOR_V2,
+    EQUITY_RECOMMENDATION_EVALUATORS,
     EQUITY_RECOMMENDATION_POLICY_SET_FORMAT,
     EQUITY_RECOMMENDATION_PROPOSAL_FORMAT,
     EquityIssuedHistoryEvidence,
@@ -82,6 +94,7 @@ from northstar_application.application_services.equity_recommendation_generation
     verify_equity_recommendation_document,
 )
 from northstar_application.application_services.equity_trade_recommendation_eligibility import (
+    EQUITY_RECOMMENDATION_VERSION_2_REASONS,
     EquityModeledEntryWindow,
     EquityRecommendationCheck,
     EquityRecommendationCheckStatus,
@@ -108,10 +121,20 @@ from northstar_application.ports.equity_research_reference_provenance import (
     EquityReferenceProvenanceKind,
 )
 
-EQUITY_RECOMMENDATION_EVALUATOR_VERSION = "northstar.equity-recommendation-evaluator/1"
-SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS = frozenset(
-    {EQUITY_RECOMMENDATION_EVALUATOR_VERSION}
-)
+# The version-1 label: the default evaluator of generation (N7) and of every record
+# written before ADR-025.
+EQUITY_RECOMMENDATION_EVALUATOR_VERSION = EQUITY_RECOMMENDATION_EVALUATOR_V1
+# Exactly the closed table's labels (N1).
+SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS = frozenset(EQUITY_RECOMMENDATION_EVALUATORS)
+
+# Each versioned document family: its format -> the evaluator it belongs to.
+_VERSIONED_FORMATS = {
+    kind: {
+        getattr(row, f"{kind}_format"): row.version
+        for row in EQUITY_RECOMMENDATION_EVALUATORS.values()
+    }
+    for kind in ("inputs", "assessment", "attempt")
+}
 
 
 class InvalidEquityRecommendationRecordError(ValueError):
@@ -205,16 +228,42 @@ def _listing(value: object, where: str) -> ListingReference:
     )
 
 
-def _require_format(document: dict[str, Any], expected: str, where: str) -> None:
+def _require_format(document: dict[str, Any], expected: str | tuple[str, ...], where: str) -> str:
+    """Require one of the ``expected`` formats; return the one stated.
+
+    Another version of the same family is Incompatible -- it may be valid for an
+    evaluator this code does not run, and nothing migrates it; anything else is
+    Invalid.
+    """
+    allowed = (expected,) if isinstance(expected, str) else tuple(expected)
     stated = document.get("format")
-    if stated == expected:
-        return
-    family = expected.rsplit("/", 1)[0] + "/"
+    if stated in allowed:
+        return stated  # type: ignore[return-value]
+    family = allowed[0].rsplit("/", 1)[0] + "/"
+    supported = " or ".join(allowed)
     if isinstance(stated, str) and stated.startswith(family):
         raise IncompatibleEquityRecommendationRecordError(
-            f"{where} is {stated}; only {expected} is supported. Nothing is migrated."
+            f"{where} is {stated}; only {supported} is supported. Nothing is migrated."
         )
-    _bad(f"{where} must be a {expected} document, not {stated!r}.")
+    _bad(f"{where} must be a {supported} document, not {stated!r}.")
+
+
+def equity_recommendation_document_evaluator(kind: str, format_: str) -> str:
+    """Return the evaluator a versioned document format belongs to (N6).
+
+    ``kind`` is ``inputs``, ``assessment`` or ``attempt``; ``format_`` must be one
+    of that family's governed formats.
+    """
+    evaluator = _VERSIONED_FORMATS[kind].get(format_)
+    if evaluator is None:
+        _bad(f"{format_!r} is not a governed {kind} format.")
+    return evaluator
+
+
+def _versioned_format(document: dict[str, Any], kind: str, where: str) -> str:
+    """Require a governed format of ``kind``; return the evaluator it belongs to."""
+    stated = _require_format(document, tuple(_VERSIONED_FORMATS[kind]), where)
+    return _VERSIONED_FORMATS[kind][stated]
 
 
 def _round_trip(value: Any, document: dict[str, Any], where: str) -> None:
@@ -633,20 +682,27 @@ def _issued_record(value: object, index: int) -> EquityPriorSessionRecommendatio
     return record
 
 
-def _issued_history(value: object) -> EquityIssuedHistoryEvidence:
-    d = _object(
-        value,
-        (
-            "exchange_code",
-            "trading_date",
-            "reference",
-            "as_of",
-            "complete_through",
-            "recording_watermark",
-            "recommendations",
-        ),
-        "issued history",
+_ISSUED_HISTORY_FIELDS = (
+    "exchange_code",
+    "trading_date",
+    "reference",
+    "as_of",
+    "complete_through",
+    "recording_watermark",
+    "recommendations",
+)
+
+
+def _issued_history(value: object, evaluator: str) -> EquityIssuedHistoryEvidence:
+    """Decode the issued history in its evaluator's shape: version 2 alone states
+    ``history_boundary``; version 1 never does."""
+    strictly_before = EQUITY_RECOMMENDATION_EVALUATORS[evaluator].strictly_before_issuance
+    fields = (
+        (*_ISSUED_HISTORY_FIELDS, "history_boundary")
+        if strictly_before
+        else (_ISSUED_HISTORY_FIELDS)
     )
+    d = _object(value, fields, "issued history")
     records = d["recommendations"]
     if not isinstance(records, list):
         _bad("issued history recommendations must be a list.")
@@ -658,13 +714,19 @@ def _issued_history(value: object) -> EquityIssuedHistoryEvidence:
         complete_through=_instant(d["complete_through"], "complete_through"),
         recording_watermark=_integer(d["recording_watermark"], "recording_watermark"),
         recommendations=tuple(_issued_record(item, i) for i, item in enumerate(records)),
+        history_boundary=(
+            _text(d["history_boundary"], "history_boundary") if strictly_before else None
+        ),
     )
     _round_trip(history, d, "issued history")
     return history
 
 
 def decode_equity_recommendation_inputs(value: object) -> EquityRecommendationInputs:
-    """Rebuild a stored frozen input envelope exactly, every fingerprint re-derived."""
+    """Rebuild a stored frozen input envelope exactly, every fingerprint re-derived.
+
+    Its format names its evaluator, whose history shape and invariants it must keep.
+    """
 
     def decode() -> EquityRecommendationInputs:
         d = _object(
@@ -681,13 +743,14 @@ def decode_equity_recommendation_inputs(value: object) -> EquityRecommendationIn
             ),
             "generation inputs",
         )
-        _require_format(d, EQUITY_RECOMMENDATION_INPUTS_FORMAT, "generation inputs")
+        evaluator = _versioned_format(d, "inputs", "generation inputs")
         inputs = EquityRecommendationInputs(
             candidate=_candidate(d["candidate"]),
             policy_set=decode_equity_policy_set(d["policy_set"]),
             listing_eligibility=_listing_eligibility(d["listing_eligibility"]),
             venue_day=EquityVenueDayEvidence.from_document(d["venue_day"]),
-            issued_history=_issued_history(d["issued_history"]),
+            issued_history=_issued_history(d["issued_history"], evaluator),
+            evaluator_version=evaluator,
         )
         _round_trip(inputs, d, "generation inputs")
         return inputs
@@ -894,7 +957,8 @@ class EquityDecodedAssessment:
 
     The diagnostics of the original audit are not part of an assessment and
     are not recovered. ``inputs`` is None exactly when no generation identity
-    was established.
+    was established. ``evaluator_version`` is the evaluator its format belongs
+    to; its inputs, when present, are of the same version.
     """
 
     document: dict[str, Any]
@@ -916,6 +980,7 @@ class EquityDecodedAssessment:
     entry_window: EquityModeledEntryWindow | None
     core_outcome: EquityRecommendationDefinition | EquityRecommendationRejection | None
     proposal: EquityTradeRecommendationProposal | None
+    evaluator_version: str = EQUITY_RECOMMENDATION_EVALUATOR_V1
 
 
 def _reasons(value: object, where: str) -> tuple[EquityRecommendationEligibilityReason, ...]:
@@ -958,8 +1023,9 @@ def decode_equity_recommendation_assessment(text: str, fingerprint: str) -> Equi
 
     def decode() -> EquityDecodedAssessment:
         d = verified_equity_recommendation_document(
-            text, fingerprint, EQUITY_RECOMMENDATION_ASSESSMENT_FORMAT, "assessment"
+            text, fingerprint, tuple(_VERSIONED_FORMATS["assessment"]), "assessment"
         )
+        evaluator = _VERSIONED_FORMATS["assessment"][d["format"]]
         _object(d, _ASSESSMENT_FIELDS, "assessment")
         _flag(d["synthetic"], True, "assessment.synthetic")
         _flag(d["authoritative"], False, "assessment.authoritative")
@@ -971,7 +1037,16 @@ def decode_equity_recommendation_assessment(text: str, fingerprint: str) -> Equi
             _bad("The assessment's status does not follow from its reasons.")
         if set(reasons) != {r for _, _, found in checks for r in found}:
             _bad("The assessment's reasons are not its checks' reasons.")
+        if evaluator != EQUITY_RECOMMENDATION_EVALUATOR_V2 and (
+            EQUITY_RECOMMENDATION_VERSION_2_REASONS & set(reasons)
+        ):
+            _bad("Only a version-2 assessment can state a version-2 reason.")
         inputs = None if d["inputs"] is None else decode_equity_recommendation_inputs(d["inputs"])
+        if inputs is not None and inputs.evaluator_version != evaluator:
+            _bad(
+                f"An assessment of {evaluator} embeds generation inputs of "
+                f"{inputs.evaluator_version}: the formats do not pair."
+            )
         candidate = (
             None
             if d["candidate"] is None
@@ -1038,15 +1113,16 @@ def decode_equity_recommendation_assessment(text: str, fingerprint: str) -> Equi
             entry_window=window,
             core_outcome=core,
             proposal=proposal,
+            evaluator_version=evaluator,
         )
 
     return _decoding("assessment", decode)  # type: ignore[no-any-return]
 
 
 def verified_equity_recommendation_document(
-    text: str, fingerprint: str, expected_format: str, where: str
+    text: str, fingerprint: str, expected_format: str | tuple[str, ...], where: str
 ) -> dict[str, Any]:
-    """Decode ``text``; require ``expected_format`` and the fingerprint it states.
+    """Decode ``text``; require ``expected_format`` (or one of several) and its fingerprint.
 
     Another version of the same format family is incompatible, not corrupt.
     """
@@ -1066,12 +1142,29 @@ def verified_equity_recommendation_document(
 
 
 def require_supported_equity_recommendation_evaluator(version: object) -> str:
-    """Return ``version`` if it is a supported evaluator version; otherwise fail closed."""
+    """Return ``version`` if it is a governed evaluator; otherwise fail closed.
+
+    A missing or empty label is Invalid; a label outside the closed table is
+    Incompatible (N1).
+    """
     if not isinstance(version, str) or not version:
         _bad("A record names its evaluator version.")
     if version not in SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS:
         raise IncompatibleEquityRecommendationRecordError(
             f"Evaluator {version} is not supported; only "
-            f"{EQUITY_RECOMMENDATION_EVALUATOR_VERSION} is. Nothing is migrated."
+            f"{' and '.join(EQUITY_RECOMMENDATION_EVALUATORS)} are. Nothing is migrated."
         )
     return version
+
+
+def require_paired_equity_recommendation_evaluator(label: str, documented: str, where: str) -> None:
+    """Refuse a supported ``label`` whose ``where`` documents belong to another evaluator (N6).
+
+    The label is supported and the documents are of a governed version, so a
+    mismatch is a corrupt record -- Invalid -- never an unsupported one.
+    """
+    if label != documented:
+        _bad(
+            f"The record names evaluator {label}, but its {where} is of {documented}: "
+            "the evaluator label and the document formats do not pair."
+        )
