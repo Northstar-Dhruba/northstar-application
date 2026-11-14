@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,7 @@ from northstar_application.application_services import (
     decode_equity_recommendation_assessment,
     decode_equity_recommendation_inputs,
     equity_history_boundary,
+    equity_modeled_issuance,
     equity_recommendation_attempt,
     equity_recommendation_disposition,
     equity_recommendation_evaluator,
@@ -212,6 +214,22 @@ def test_no_boundary_precedes_the_lowest_representable_instant() -> None:
         equity_history_boundary(PointInTime("0001-01-01T00:00:00Z"))
     with pytest.raises(TypeError):
         equity_history_boundary("2026-08-12T04:06:00Z")  # type: ignore[arg-type]
+
+
+def test_instants_in_year_one_keep_four_digit_years_on_every_platform() -> None:
+    # Regression: strftime("%Y") yields "1-01-01" under glibc; PointInTime rejects
+    # that, and the boundary would misreport it as "no representable instant".
+    lowest, next_us = "0001-01-01T00:00:00Z", "0001-01-01T00:00:00.000001Z"
+    assert equity_modeled_issuance(PointInTime(lowest), timedelta(0)).value == lowest
+    assert equity_modeled_issuance(PointInTime(lowest), timedelta(microseconds=1)).value == next_us
+    assert equity_modeled_issuance(PointInTime(next_us), timedelta(0)).value == next_us
+    boundary = equity_history_boundary(PointInTime(next_us))
+    assert boundary.value == lowest
+    assert boundary == PointInTime(lowest)
+    assert boundary.compare(PointInTime(next_us)) < 0
+    assert equity_history_boundary(PointInTime("1000-01-01T00:00:00Z")).value == (
+        "0999-12-31T23:59:59.999999Z"
+    )
 
 
 # ======================================================================

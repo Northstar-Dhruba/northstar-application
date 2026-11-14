@@ -329,8 +329,13 @@ def _datetime(instant: PointInTime) -> datetime:
 
 
 def _exact_point(value: datetime) -> PointInTime:
-    # Microseconds are written out in full; PointInTime canonicalizes them.
-    return PointInTime(value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
+    # Microseconds are written out in full; PointInTime canonicalizes them. Explicit
+    # field widths, not strftime("%Y"): glibc does not zero-pad years below 1000.
+    utc = value.astimezone(UTC)
+    return PointInTime(
+        f"{utc.year:04d}-{utc.month:02d}-{utc.day:02d}"
+        f"T{utc.hour:02d}:{utc.minute:02d}:{utc.second:02d}.{utc.microsecond:06d}Z"
+    )
 
 
 def equity_modeled_issuance(decision_as_of: PointInTime, latency: timedelta) -> PointInTime:
