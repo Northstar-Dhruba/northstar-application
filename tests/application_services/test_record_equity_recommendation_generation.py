@@ -967,7 +967,7 @@ def test_ak_recording_never_writes_or_fabricates_issued_history() -> None:
         store_port_module,
     ):
         assert "session_history" not in inspect.getsource(module)
-    implementations = [
+    implementations = {
         obj
         for name, module in list(sys.modules.items())
         if name.startswith("northstar_application")
@@ -975,8 +975,12 @@ def test_ak_recording_never_writes_or_fabricates_issued_history() -> None:
         if isinstance(obj, type)
         and issubclass(obj, EquitySessionRecommendationHistorySource)
         and obj is not EquitySessionRecommendationHistorySource
-    ]
-    assert implementations == []
+    }
+    # EI-5D (ADR-024, sections 6 and 12) adds exactly one implementation: it relays the
+    # issuance authority's reader and fabricates nothing. Recording never writes history.
+    assert implementations <= {
+        application_services.AuthoritativeEquitySessionRecommendationHistorySource
+    }
 
 
 def test_al_no_issuance_or_lifecycle_state_exists_here() -> None:
