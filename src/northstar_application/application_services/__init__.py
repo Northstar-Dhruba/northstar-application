@@ -336,6 +336,25 @@ from northstar_application.application_services.equity_recommendation_issuance_r
     equity_issuance_session_view,
     equity_issuance_write_decision,
 )
+from northstar_application.application_services.equity_recommendation_lifecycle_authorization import (  # noqa: E501
+    VerifiedEquityRecommendationLifecycleAppend,
+    equity_lifecycle_append_decision,
+    require_verified_equity_recommendation_lifecycle_append,
+)
+from northstar_application.application_services.equity_recommendation_lifecycle_events import (
+    EQUITY_RECOMMENDATION_LIFECYCLE_EVENT_FORMAT,
+    IncompatibleEquityLifecycleEventDocumentError,
+    InvalidEquityLifecycleEventDocumentError,
+    decode_equity_lifecycle_event_document,
+    equity_lifecycle_event_document,
+    equity_lifecycle_event_documents,
+    equity_recorded_lifecycle,
+)
+from northstar_application.application_services.equity_recommendation_lifecycle_window import (
+    InvalidEquityLifecycleWindowProvenanceError,
+    equity_issued_lifecycle_window,
+    equity_lifecycle_window,
+)
 from northstar_application.application_services.equity_research_window import (
     NSE_EQUITY_INTRADAY_V1_RESEARCH_WINDOW,
     EquityResearchWindowEvaluation,
@@ -588,6 +607,14 @@ from northstar_application.application_services.record_equity_recommendation_gen
     EquityRecommendationRecordingResult,
     RecordEquityRecommendationGenerationUseCase,
 )
+from northstar_application.application_services.record_equity_recommendation_lifecycle import (
+    EquityLifecycleRecordingOutcome,
+    EquityLifecycleRecordingRefusal,
+    EquityLifecycleRecordingRefusedError,
+    EquityLifecycleRecordingResult,
+    EquityLifecycleRecordingUnresolvedError,
+    RecordEquityRecommendationLifecycleUseCase,
+)
 from northstar_application.application_services.record_forward_research_decision import (
     ForwardResearchContractViolationError,
     ForwardResearchRecord,
@@ -805,6 +832,25 @@ __all__ = [
     "EquityVerifiedRecommendationGeneration",
     "VerifyStoredEquityRecommendationGenerationUseCase",
     "EquitySyntheticLifecycleEvaluation",
+    "VerifiedEquityRecommendationLifecycleAppend",
+    "equity_lifecycle_append_decision",
+    "require_verified_equity_recommendation_lifecycle_append",
+    "EQUITY_RECOMMENDATION_LIFECYCLE_EVENT_FORMAT",
+    "IncompatibleEquityLifecycleEventDocumentError",
+    "InvalidEquityLifecycleEventDocumentError",
+    "decode_equity_lifecycle_event_document",
+    "equity_lifecycle_event_document",
+    "equity_lifecycle_event_documents",
+    "equity_recorded_lifecycle",
+    "InvalidEquityLifecycleWindowProvenanceError",
+    "equity_issued_lifecycle_window",
+    "equity_lifecycle_window",
+    "EquityLifecycleRecordingOutcome",
+    "EquityLifecycleRecordingRefusal",
+    "EquityLifecycleRecordingRefusedError",
+    "EquityLifecycleRecordingResult",
+    "EquityLifecycleRecordingUnresolvedError",
+    "RecordEquityRecommendationLifecycleUseCase",
     "EquitySyntheticLifecycleRefusal",
     "EquitySyntheticLifecycleRefusedError",
     "EquitySyntheticLifecycleRequest",

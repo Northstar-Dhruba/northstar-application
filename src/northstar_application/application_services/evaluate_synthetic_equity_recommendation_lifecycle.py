@@ -93,6 +93,10 @@ from northstar_application.application_services.equity_recommendation_generation
 from northstar_application.application_services.equity_recommendation_generation_records import (
     EquityRecommendationDispositionKind,
 )
+from northstar_application.application_services.equity_recommendation_lifecycle_window import (
+    InvalidEquityLifecycleWindowProvenanceError,
+    equity_lifecycle_window,
+)
 from northstar_application.application_services.equity_trade_recommendation_eligibility import (
     EquityTradeRecommendationProposal,
 )
@@ -303,24 +307,17 @@ def _lifecycle_window(
     proposal: EquityTradeRecommendationProposal,
     candidate: EquityRecommendationCandidateProvenance,
 ) -> EquityLifecycleWindow:
-    """Return the Core window from the verified proposal and its candidate's grid."""
-    entry = proposal.entry_window
-    openings = candidate.entry_bar_openings()
-    latest = entry.latest_entry_bar_opens_at
-    if latest not in openings or entry.modeled_exit_at not in candidate.bar_ends():
+    """Return the Core window from the verified proposal and its candidate's grid.
+
+    The grid rule is the shared ``equity_lifecycle_window`` (EI-6B design,
+    section 6); its refusal is this evaluator's SNAPSHOT_EVIDENCE_INCONSISTENT.
+    """
+    try:
+        return equity_lifecycle_window(proposal, candidate)
+    except InvalidEquityLifecycleWindowProvenanceError as exc:
         raise _refuse(
-            EquitySyntheticLifecycleRefusal.SNAPSHOT_EVIDENCE_INCONSISTENT,
-            "The proposal's entry window does not lie on its research-window grid.",
-        )
-    index = openings.index(latest)
-    ends = openings[index + 1] if index + 1 < len(openings) else candidate.research_window_closes_at
-    return EquityLifecycleWindow(
-        levels=proposal.definition.levels,
-        eligible_from=entry.timing.eligible_from,
-        latest_entry_bar_opens_at=latest,
-        entry_window_ends_at=ends,
-        modeled_exit_at=entry.modeled_exit_at,
-    )
+            EquitySyntheticLifecycleRefusal.SNAPSHOT_EVIDENCE_INCONSISTENT, str(exc)
+        ) from exc
 
 
 def _candle_references(
