@@ -43,6 +43,7 @@ from northstar_core.recommendations.equity import EquityIssuanceKind
 from northstar_core.strategy import StrategyIdentity
 
 from northstar_application import application_services
+from northstar_application import ports as ports_package
 from northstar_application.application_services import (
     EQUITY_RECOMMENDATION_ISSUANCE_AUTHORITY_REFERENCE,
     EQUITY_RECOMMENDATION_ISSUANCE_KEY_NAMESPACE,
@@ -92,6 +93,8 @@ from northstar_application.ports import (
     EquityRecommendationIssuanceWrite,
     EquityRecommendationIssuanceWriter,
     EquitySessionRecommendationHistory,
+    InvalidEquityRecommendationIssuanceWriteError,
+    InvalidStoredEquityRecommendationIssuanceAuthorityError,
     UnverifiedEquityRecommendationIssuanceWriteError,
 )
 
@@ -1038,6 +1041,252 @@ def test_an_unconfirmed_declaration_commit_reconciles(
 
 
 # ----------------------------------------------------------------------
+# D6-5: typed, permanent stored-authority integrity failures (EI-6A prerequisite)
+# ----------------------------------------------------------------------
+
+_INTEGRITY = InvalidStoredEquityRecommendationIssuanceAuthorityError
+_OTHER_ISSUANCE = equity_recommendation_issuance_identity(
+    _KEY_1, _PROPOSAL_2, EquityIssuanceKind.MODELED
+)
+
+
+def _failure(category: str, issuance_id: str | None = None) -> Exception:
+    return _INTEGRITY(category, "test: corrupt stored state", issuance_id=issuance_id)
+
+
+class _Corrupted(_Authority):
+    """LABELLED SYNTHETIC TEST AUTHORITY that finds corrupt stored state (D6-5).
+
+    It shares the records of the authority it wraps. ``failures`` maps a port
+    method to the typed integrity failure it raises at that boundary -- after
+    validating any authorization and before anything changes, as an adapter
+    that meets corrupt stored state would. TEST-ONLY: it holds no corrupt
+    rows and models no storage.
+    """
+
+    def __init__(self, base: _Authority, **failures: Exception) -> None:
+        super().__init__()
+        self.issuances, self.declarations = base.issuances, base.declarations
+        self.sequence = base.sequence
+        self.failures = failures
+        self.write_calls = 0
+
+    def _fail(self, method: str) -> None:
+        failure = self.failures.get(method)
+        if failure is not None:
+            raise failure
+
+    def load_issuance(self, issuance_id: str) -> EquityRecordedIssuance | None:
+        self._fail("load_issuance")
+        return super().load_issuance(issuance_id)
+
+    def session_view(self, exchange_code, trading_date):  # type: ignore[no-untyped-def]
+        self._fail("session_view")
+        return super().session_view(exchange_code, trading_date)
+
+    def session_view_at(self, exchange_code, trading_date, watermark):  # type: ignore[no-untyped-def]
+        self._fail("session_view_at")
+        return super().session_view_at(exchange_code, trading_date, watermark)
+
+    def write_issuance(self, authorization):  # type: ignore[no-untyped-def]
+        require_verified_equity_recommendation_issuance(authorization)
+        self.write_calls += 1
+        self._fail("write_issuance")
+        return super().write_issuance(authorization)
+
+    def write_declaration(self, authorization):  # type: ignore[no-untyped-def]
+        require_verified_equity_issuance_completeness_declaration(authorization)
+        self.write_calls += 1
+        self._fail("write_declaration")
+        return super().write_declaration(authorization)
+
+
+def _corrupt(world: _World, **failures: Exception) -> _Corrupted:
+    world.authority = _Corrupted(world.authority, **failures)
+    return world.authority
+
+
+def test_d65_the_integrity_error_is_typed_permanent_and_distinct() -> None:
+    failure = _INTEGRITY(_INTEGRITY.ISSUANCE, "test", issuance_id=_OTHER_ISSUANCE)
+    assert (failure.category, failure.issuance_id, failure.retryable) == (
+        "ISSUANCE",
+        _OTHER_ISSUANCE,
+        False,
+    )
+    assert failure.concerns_issuance(_OTHER_ISSUANCE)
+    assert not failure.concerns_issuance("eiris1-sha256:" + "0" * 64)
+    assert _INTEGRITY.CATEGORIES == {"ISSUANCE", "DECLARATION", "LEDGER"}
+    for category in ("DECLARATION", "LEDGER"):
+        assert not _INTEGRITY(category, "test").concerns_issuance(_OTHER_ISSUANCE)
+    with pytest.raises(ValueError):
+        _INTEGRITY("UNKNOWN", "test")
+    with pytest.raises(ValueError):
+        _INTEGRITY(_INTEGRITY.LEDGER, "test", issuance_id=_OTHER_ISSUANCE)
+    for other in (
+        EquityRecommendationIssuanceUnavailableError,
+        EquityRecommendationIssuanceCommitUnconfirmedError,
+        EquityIssuanceWatermarkBeyondAuthorityError,
+        UnverifiedEquityRecommendationIssuanceWriteError,
+        InvalidEquityRecommendationIssuanceWriteError,
+        EquityRecommendationHistoryUnavailableError,
+        EquityRecommendationIssuanceRefusedError,
+        EquityRecommendationIssuanceUnresolvedError,
+        InvalidEquityIssuedRecommendationError,
+    ):
+        assert not issubclass(_INTEGRITY, other) and not issubclass(other, _INTEGRITY)
+    assert _INTEGRITY.__module__ == "northstar_application.ports.equity_recommendation_issuance"
+    assert "InvalidStoredEquityRecommendationIssuanceAuthorityError" in ports_package.__all__
+
+
+@pytest.mark.parametrize(
+    ("method", "category", "other_issuance"),
+    [
+        ("session_view_at", "DECLARATION", False),
+        ("session_view", "LEDGER", False),
+        ("session_view_at", "ISSUANCE", True),
+    ],
+    ids=["corrupt declaration", "corrupt ledger", "corrupt unrelated issuance"],
+)
+def test_d65_corruption_met_reading_the_history_is_a_permanent_refusal_before_any_write(
+    method: str, category: str, other_issuance: bool
+) -> None:
+    world, disposition = _proposed()
+    issuance_id = _OTHER_ISSUANCE if other_issuance else None
+    authority = _corrupt(world, **{method: _failure(category, issuance_id)})
+    refused = world.refusal(disposition.generation_key)
+    assert (refused.reason, refused.retryable) == (_R.STORED_AUTHORITY_INVALID, False)
+    assert isinstance(refused.__cause__, _INTEGRITY)
+    assert authority.write_calls == 0 and authority.issuances == []
+
+
+@pytest.mark.parametrize(
+    ("category", "other_issuance"),
+    [("ISSUANCE", True), ("LEDGER", False), ("DECLARATION", False)],
+    ids=["corrupt unrelated issuance", "corrupt ledger", "corrupt declaration"],
+)
+def test_d65_corruption_raised_by_the_writer_is_a_permanent_refusal_with_nothing_written(
+    category: str, other_issuance: bool
+) -> None:
+    world, disposition = _proposed()
+    issuance_id = _OTHER_ISSUANCE if other_issuance else None
+    authority = _corrupt(world, write_issuance=_failure(category, issuance_id))
+    refused = world.refusal(disposition.generation_key)
+    assert (refused.reason, refused.retryable) == (_R.STORED_AUTHORITY_INVALID, False)
+    assert authority.write_calls == 1 and authority.issuances == []
+
+
+def test_d65_a_corrupt_record_under_the_offered_identity_is_stored_issuance_invalid() -> None:
+    world, disposition = _proposed()
+    own = equity_issued_recommendation(disposition).issuance_id
+    authority = _corrupt(world, write_issuance=_failure("ISSUANCE", own))
+    result = world.issue(disposition.generation_key)
+    assert (result.outcome, result.authoritative, result.reconciled) == (
+        _O.STORED_ISSUANCE_INVALID,
+        None,
+        False,
+    )
+    assert not result.is_issued and authority.issuances == []  # never adopted or repaired
+
+
+def test_d65_corruption_met_reconciling_an_unconfirmed_commit_fails_closed() -> None:
+    world, disposition = _proposed()
+    own = equity_issued_recommendation(disposition).issuance_id
+    authority = _corrupt(world, load_issuance=_failure("ISSUANCE", own))
+    authority.script = ["lost_after"]
+    result = world.issue(disposition.generation_key)
+    assert (result.outcome, result.authoritative, result.writes, result.reconciled) == (
+        _O.STORED_ISSUANCE_INVALID,
+        None,
+        1,
+        True,
+    )
+
+    world, disposition = _proposed()
+    authority = _corrupt(world, load_issuance=_failure("LEDGER"))
+    authority.script = ["lost_after"]
+    with pytest.raises(_INTEGRITY) as raised:
+        world.issue(disposition.generation_key)
+    assert type(raised.value) is _INTEGRITY and raised.value.category == "LEDGER"
+    assert authority.issuance_writes == 1  # no retry: nothing is claimed either way
+
+
+def test_d65_an_outage_stays_retryable_and_a_valid_equivalent_retry_is_unchanged() -> None:
+    world, disposition = _proposed()
+    world.authority.script = ["unavailable"]
+    refused = world.refusal(disposition.generation_key)
+    assert (refused.reason, refused.retryable) == (_R.AUTHORITY_UNAVAILABLE, True)
+    authority = _corrupt(world, write_issuance=_failure("LEDGER"))
+    assert world.refusal(disposition.generation_key).retryable is False
+    authority.failures = {}
+    assert world.issue(disposition.generation_key).outcome is _O.ISSUED
+    again = world.issue(disposition.generation_key)
+    assert (again.outcome, len(authority.issuances)) == (_O.EQUIVALENT, 1)
+
+
+@pytest.mark.parametrize("category", ["DECLARATION", "LEDGER"])
+def test_d65_a_corrupt_declaration_or_ledger_fails_a_declaration_permanently(
+    category: str,
+) -> None:
+    world = _world()
+    authority = _corrupt(world, write_declaration=_failure(category))
+    with pytest.raises(_INTEGRITY) as raised:
+        world.declare(_B)
+    assert raised.value.category == category and raised.value.retryable is False
+    assert authority.declarations == [] and authority.sequence == 0
+
+
+def test_d65_corruption_met_reconciling_a_declaration_is_never_settled_or_retried() -> None:
+    world = _world()
+    authority = _corrupt(world, session_view=_failure("LEDGER"))
+    authority.script = ["lost_after"]
+    with pytest.raises(_INTEGRITY) as raised:
+        world.declare(_B)
+    assert type(raised.value) is _INTEGRITY  # not DECLARATION_EQUIVALENT, not unresolved
+    assert authority.writes == 1
+
+
+def test_d65_declaration_outages_commit_uncertainty_and_equivalence_are_unchanged() -> None:
+    world = _world()
+    world.authority.script = ["unavailable"]
+    with pytest.raises(EquityRecommendationIssuanceUnavailableError) as raised:
+        world.declare(_B)
+    assert not isinstance(raised.value, _INTEGRITY)
+    world.authority.script = ["lost_before"]
+    assert (world.declare(_B).outcome, world.authority.sequence) == (_D.DECLARED, 1)
+    assert world.declare(_B).outcome is _D.DECLARATION_EQUIVALENT
+    assert world.declare(_ist(9, 30)).outcome is _D.COMPLETENESS_REGRESSION
+
+
+@pytest.mark.parametrize("category", ["ISSUANCE", "DECLARATION", "LEDGER"])
+def test_d65_a_corrupt_authority_never_yields_an_authoritative_history_view(
+    category: str,
+) -> None:
+    undeclared = AuthoritativeEquitySessionRecommendationHistorySource(_Authority())
+    assert undeclared.session_history(ei4c._NSE, ei4c._DAY, _B) is None  # unknown: unchanged
+    world = _world()
+    world.declare(_B)
+    clean = AuthoritativeEquitySessionRecommendationHistorySource(world.authority)
+    view = clean.session_history(ei4c._NSE, ei4c._DAY, _B)
+    assert view is not None and view.recommendations == ()  # declared, empty: unchanged
+    authority = _corrupt(world, session_view=_failure(category))
+    source = AuthoritativeEquitySessionRecommendationHistorySource(authority)
+    with pytest.raises(_INTEGRITY) as raised:
+        source.session_history(ei4c._NSE, ei4c._DAY, _B)  # never None, never ()
+    assert not isinstance(raised.value, EquityRecommendationHistoryUnavailableError)
+    authority.failures, authority.unreadable = {}, True
+    with pytest.raises(EquityRecommendationHistoryUnavailableError):
+        source.session_history(ei4c._NSE, ei4c._DAY, _B)  # an outage: unchanged
+
+
+def test_d65_v2_generation_over_a_corrupt_authority_raises_with_no_audit() -> None:
+    world = _world()
+    world.declare(_B)
+    _corrupt(world, session_view=_failure("LEDGER"))
+    with pytest.raises(_INTEGRITY):
+        world.generate()
+
+
+# ----------------------------------------------------------------------
 # NB, AR: no execution and the write boundary as an architecture rule
 # ----------------------------------------------------------------------
 
@@ -1112,7 +1361,17 @@ def test_ar_only_the_two_use_cases_call_the_writer_or_issue_authorizations() -> 
 
 def test_nb03_ar_issuance_modules_import_no_execution_infrastructure_or_clock() -> None:
     trees = _trees()
-    forbidden = ("infrastructure", "broker", "execution", "paper", "futures", "option", "order")
+    forbidden = (
+        "infrastructure",
+        "broker",
+        "execution",
+        "paper",
+        "futures",
+        "option",
+        "order",
+        "sqlite",
+        "sqlalchemy",
+    )
     violations = []
     for path in _ISSUANCE_MODULES:
         for node in ast.walk(trees[path]):

@@ -45,6 +45,7 @@ from northstar_application.ports.equity_recommendation_issuance import (
     EquityRecommendationIssuanceWrite,
     EquityRecommendationIssuanceWriter,
     InvalidEquityRecommendationIssuanceWriteError,
+    InvalidStoredEquityRecommendationIssuanceAuthorityError,
     UnverifiedEquityRecommendationIssuanceWriteError,
 )
 from northstar_application.ports.equity_recommendation_references import (
@@ -472,5 +473,6 @@ __all__ = [
     "EquityRecommendationIssuanceWrite",
     "EquityRecommendationIssuanceWriter",
     "InvalidEquityRecommendationIssuanceWriteError",
+    "InvalidStoredEquityRecommendationIssuanceAuthorityError",
     "UnverifiedEquityRecommendationIssuanceWriteError",
 ]

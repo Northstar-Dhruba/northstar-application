@@ -25,6 +25,14 @@ declared, or less, is retried within the bound; anything greater cannot show
 whether this declaration was recorded, and
 EquityIssuanceDeclarationUnresolvedError says nothing is claimed.
 
+Corrupt stored authority state -- a corrupt declaration or recording-sequence
+ledger, or any other stored record -- raises the authority's
+InvalidStoredEquityRecommendationIssuanceAuthorityError unchanged (D6-5),
+whether the writer or the reconciliation reload meets it. It is permanent:
+never settled as DECLARATION_EQUIVALENT, never retried, never reported as an
+unresolved commit, and never read as an undeclared session. No declaration is
+reported as recorded.
+
 Nothing here reads a clock or calls a provider, broker or network.
 """
 
