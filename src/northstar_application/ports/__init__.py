@@ -48,6 +48,17 @@ from northstar_application.ports.equity_recommendation_issuance import (
     InvalidStoredEquityRecommendationIssuanceAuthorityError,
     UnverifiedEquityRecommendationIssuanceWriteError,
 )
+from northstar_application.ports.equity_recommendation_lifecycle_store import (
+    EquityRecommendationLifecycleCommitUnconfirmedError,
+    EquityRecommendationLifecycleStore,
+    EquityRecommendationLifecycleStoreUnavailableError,
+    EquityRecommendationLifecycleWrite,
+    EquityRecommendationLifecycleWriteOutcome,
+    EquityRecordedLifecycle,
+    InvalidEquityRecommendationLifecycleWriteError,
+    InvalidStoredEquityRecommendationLifecycleError,
+    UnverifiedEquityRecommendationLifecycleAppendError,
+)
 from northstar_application.ports.equity_recommendation_references import (
     EquityPriorSessionRecommendation,
     EquityRecommendationHistoryUnavailableError,
@@ -475,4 +486,13 @@ __all__ = [
     "InvalidEquityRecommendationIssuanceWriteError",
     "InvalidStoredEquityRecommendationIssuanceAuthorityError",
     "UnverifiedEquityRecommendationIssuanceWriteError",
+    "EquityRecommendationLifecycleCommitUnconfirmedError",
+    "EquityRecommendationLifecycleStore",
+    "EquityRecommendationLifecycleStoreUnavailableError",
+    "EquityRecommendationLifecycleWrite",
+    "EquityRecommendationLifecycleWriteOutcome",
+    "EquityRecordedLifecycle",
+    "InvalidEquityRecommendationLifecycleWriteError",
+    "InvalidStoredEquityRecommendationLifecycleError",
+    "UnverifiedEquityRecommendationLifecycleAppendError",
 ]
