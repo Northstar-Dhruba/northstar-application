@@ -238,6 +238,15 @@ from northstar_application.application_services.equity_intraday_evidence_workflo
     IngestSyntheticEquityCandleEventsUseCase,
     IssueEquityResearchEvidenceUseCase,
 )
+from northstar_application.application_services.equity_lifecycle_monitoring_selection import (
+    EQUITY_LIFECYCLE_MONITORING_CATALOG_LIMIT,
+    EQUITY_LIFECYCLE_MONITORING_POLICY,
+    EquityLifecycleSelectionStop,
+    EquityLifecycleSnapshotAnchor,
+    EquityLifecycleSnapshotSelection,
+    equity_snapshot_eligible,
+    select_equity_lifecycle_snapshots,
+)
 from northstar_application.application_services.equity_recommendation_generation_decoding import (  # noqa: E501
     EQUITY_RECOMMENDATION_EVALUATOR_VERSION,
     SUPPORTED_EQUITY_RECOMMENDATION_EVALUATOR_VERSIONS,
@@ -583,6 +592,21 @@ from northstar_application.application_services.measure_recommendation_outcome i
     RecommendationOutcomeMeasurement,
     RecommendationOutcomeUnavailableReason,
 )
+from northstar_application.application_services.monitor_equity_recommendation_lifecycles import (
+    EquityLifecycleMonitoringDeclaredSessionScope,
+    EquityLifecycleMonitoringDiagnostic,
+    EquityLifecycleMonitoringDiagnosticKind,
+    EquityLifecycleMonitoringExplicitScope,
+    EquityLifecycleMonitoringOutcome,
+    EquityLifecycleMonitoringRefusal,
+    EquityLifecycleMonitoringReport,
+    EquityLifecycleMonitoringRequest,
+    EquityLifecycleMonitoringResult,
+    EquityLifecycleMonitoringScopeError,
+    EquityLifecycleMonitoringStep,
+    EquityLifecycleMonitoringStrategyListingScope,
+    MonitorEquityRecommendationLifecyclesUseCase,
+)
 from northstar_application.application_services.monitor_futures_trade_recommendations import (  # noqa: E501
     FUTURES_INCOMPLETE_COVERAGE_ATTESTATION_FORMAT,
     FuturesIncompleteCoverageDeclaration,
@@ -704,6 +728,26 @@ from northstar_application.application_services.verify_equity_synthetic_policy_b
 )
 
 __all__ = [
+    "EQUITY_LIFECYCLE_MONITORING_CATALOG_LIMIT",
+    "EQUITY_LIFECYCLE_MONITORING_POLICY",
+    "EquityLifecycleSelectionStop",
+    "EquityLifecycleSnapshotAnchor",
+    "EquityLifecycleSnapshotSelection",
+    "equity_snapshot_eligible",
+    "select_equity_lifecycle_snapshots",
+    "EquityLifecycleMonitoringDeclaredSessionScope",
+    "EquityLifecycleMonitoringDiagnostic",
+    "EquityLifecycleMonitoringDiagnosticKind",
+    "EquityLifecycleMonitoringExplicitScope",
+    "EquityLifecycleMonitoringOutcome",
+    "EquityLifecycleMonitoringRefusal",
+    "EquityLifecycleMonitoringReport",
+    "EquityLifecycleMonitoringRequest",
+    "EquityLifecycleMonitoringResult",
+    "EquityLifecycleMonitoringScopeError",
+    "EquityLifecycleMonitoringStep",
+    "EquityLifecycleMonitoringStrategyListingScope",
+    "MonitorEquityRecommendationLifecyclesUseCase",
     "EQUITY_CANDLE_PAYLOAD_FINGERPRINT_PREFIX",
     "EQUITY_CANDLE_RECORD_FINGERPRINT_PREFIX",
     "EquityCandleAppendOutcome",
