@@ -91,6 +91,9 @@ from northstar_application.ports.equity_candle_evidence_journal import (
     EquityCandleEvidenceSnapshotStore,
     EquityCandleEvidenceUnavailableError,
 )
+from northstar_application.ports.equity_candle_evidence_snapshot_reader import (
+    EquityCandleEvidenceSnapshotReader,
+)
 from northstar_application.ports.equity_intraday_research_timeline_store import (
     EquityIntradayResearchDecisionNotReproducedError,
     EquityIntradayResearchHistoricalEvaluationUnavailableError,
@@ -272,7 +275,7 @@ def _canonical_document(text: str, where: str) -> dict[str, Any]:
 def _rehydrate_entry(
     identity: EquityIntradayResearchTimelineIdentity,
     evaluator: EquityOpeningRangeBreakoutEvaluator,
-    snapshots: EquityCandleEvidenceSnapshotStore,
+    snapshots: EquityCandleEvidenceSnapshotReader,
     index: int,
     record: StoredEquityIntradayResearchTimelineEntry,
 ) -> EquityIntradayResearchTimelineEntry:
@@ -340,7 +343,7 @@ def _rehydrate_entry(
 def rehydrate_equity_intraday_research_timeline(
     identity: EquityIntradayResearchTimelineIdentity,
     stored: StoredEquityIntradayResearchTimeline,
-    snapshots: EquityCandleEvidenceSnapshotStore,
+    snapshots: EquityCandleEvidenceSnapshotReader,
 ) -> EquityIntradayResearchTimeline:
     """Rebuild and verify the authoritative timeline from ``stored``, whole or not at all.
 
@@ -349,13 +352,18 @@ def rehydrate_equity_intraday_research_timeline(
     InvalidStoredEquityIntradayResearchTimelineError (or one of its EI3-D13
     subclasses) when anything fails verification. A snapshot store failure
     propagates as EquityCandleEvidenceUnavailableError.
+
+    ``snapshots`` needs only the read operation ``get_snapshot`` (EI7-P4,
+    EI7-FC6): every EquityCandleEvidenceSnapshotStore still qualifies, and a
+    read-only reader qualifies without any write method. Rehydration only
+    ever reads; its verification and decision semantics are unchanged.
     """
     if not isinstance(identity, EquityIntradayResearchTimelineIdentity):
         raise TypeError("identity must be an EquityIntradayResearchTimelineIdentity.")
     if not isinstance(stored, StoredEquityIntradayResearchTimeline):
         raise TypeError("stored must be a StoredEquityIntradayResearchTimeline.")
-    if not isinstance(snapshots, EquityCandleEvidenceSnapshotStore):
-        raise TypeError("snapshots must be an EquityCandleEvidenceSnapshotStore.")
+    if not isinstance(snapshots, EquityCandleEvidenceSnapshotReader):
+        raise TypeError("snapshots must be an EquityCandleEvidenceSnapshotReader.")
     if (stored.strategy, stored.listing, stored.trading_date) != (
         identity.strategy,
         identity.listing,
