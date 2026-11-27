@@ -42,6 +42,14 @@ unreadable lifecycle is that item's explicit ``INVALID`` or ``UNAVAILABLE``
 status, never an omitted or successful-looking summary; corrupt issuance
 authority refuses with PERSISTED_AUTHORITY_INVALID.
 
+A permanent read-storage failure (``EquityReadStorageIntegrityError``,
+EI7-SI1) from any reader -- lifecycle, generation record or a panel's
+snapshot -- refuses the whole detail, and the whole summary, with
+PERSISTED_AUTHORITY_INVALID, not retryable (SI-A). It establishes nothing
+about any one record, so it is never ``ISSUANCE_NOT_FOUND``, a missing
+disposition, a panel ``INVALID`` or ``UNAVAILABLE``, or a summary
+``INVALID`` or ``UNAVAILABLE``.
+
 No fill, execution price, realized P&L, win rate, return, recording time or
 monitoring time exists in any view: none is stored, so none is shown
 (EI-7 R-9, R-11). Nothing here writes, reads a clock or calls out.
@@ -66,6 +74,7 @@ from northstar_application.application_services.equity_candle_evidence_snapshot 
 from northstar_application.application_services.equity_read_query_errors import (
     EquityReadQueryRefusal,
     refuse_equity_read_query,
+    refusing_equity_read_storage_failure,
 )
 from northstar_application.application_services.equity_recommendation_generation_decoding import (
     InvalidEquityRecommendationRecordError,
@@ -241,7 +250,10 @@ def _panel(
         )
 
     try:
-        snapshot = snapshots.get_snapshot(snapshot_id)
+        # EI7-SI1: a permanent read-storage failure proves nothing about this snapshot,
+        # so it is never a panel status: it refuses the whole detail (SI-A).
+        with refusing_equity_read_storage_failure():
+            snapshot = snapshots.get_snapshot(snapshot_id)
     except InvalidStoredEquityCandleEvidenceSnapshotError:
         return invalid(EquityEvidencePanelReason.EVIDENCE_INVALID)
     except EquityCandleEvidenceUnavailableError:
@@ -362,7 +374,8 @@ def _load_lifecycle(
     lifecycles: EquityRecommendationLifecycleReader, issuance_id: str
 ) -> EquityRecordedLifecycle | None:
     try:
-        recorded = lifecycles.load_lifecycle(issuance_id)
+        with refusing_equity_read_storage_failure():  # EI7-SI1: never a summary status
+            recorded = lifecycles.load_lifecycle(issuance_id)
     except InvalidStoredEquityRecommendationIssuanceAuthorityError as exc:
         raise refuse_equity_read_query(
             _R.PERSISTED_AUTHORITY_INVALID, "the issuance authority is invalid"
@@ -415,7 +428,10 @@ class GetEquityRecommendationDetailUseCase:
             raise refuse_equity_read_query(_R.ISSUANCE_NOT_FOUND, "no such issuance is recorded")
         issuance = recorded.issuance
         try:
-            disposition = self._generations.load_disposition(issuance.recommendation.generation_key)
+            with refusing_equity_read_storage_failure():  # EI7-SI1
+                disposition = self._generations.load_disposition(
+                    issuance.recommendation.generation_key
+                )
         except InvalidEquityRecommendationRecordError as exc:
             raise refuse_equity_read_query(
                 _R.PERSISTED_AUTHORITY_INVALID, "the issuance's generation record is invalid"

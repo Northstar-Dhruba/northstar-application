@@ -20,7 +20,9 @@ here; this module imports no web framework.
 - UNSUPPORTED_SCOPE: a malformed or unsupported request value;
 - PERSISTED_AUTHORITY_INVALID: corrupt or inconsistent required persisted
   authority, a failed lineage comparison, or an unverifiable primary research
-  timeline or configuration (EI7-CF4, EI7-P5, EI7-FC3);
+  timeline or configuration (EI7-CF4, EI7-P5, EI7-FC3); and a permanent
+  read-storage failure, ``EquityReadStorageIntegrityError`` (EI7-SI1), which
+  says nothing about any one record;
 - LIFECYCLE_HISTORY_INVALID: a corrupt lifecycle history of a detail;
 - DEPENDENCY_UNAVAILABLE: a required reader could not be read.
 
@@ -31,11 +33,28 @@ query refusal: a query is never constructed without its readers.
 A refusal's message names what failed, never stored document content,
 evidence payloads or request input beyond the reason. The underlying port
 error is kept as ``__cause__`` for diagnostics only.
+
+Permanent read-storage failure (SI-A, EI7-SI1)
+----------------------------------------------
+``refusing_equity_read_storage_failure()`` is the one query-boundary mapping
+of ``EquityReadStorageIntegrityError``: every EI-7C query runs its reader
+calls inside it, so the error -- which no reader-family handler catches,
+because it inherits from neither the unavailability nor the record
+integrity errors -- becomes PERSISTED_AUTHORITY_INVALID for the whole
+response, not retryable, with one fixed message. It is never turned into
+DEPENDENCY_UNAVAILABLE, an UNKNOWN or NOT_QUERYABLE status, an evidence
+panel or a lifecycle summary status, and no partial result is returned.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from enum import StrEnum
+
+from northstar_application.ports.equity_read_storage_integrity import (
+    EquityReadStorageIntegrityError,
+)
 
 
 class EquityReadQueryRefusal(StrEnum):
@@ -80,3 +99,23 @@ def refuse_equity_read_query(
 ) -> EquityReadQueryRefusedError:
     """Return a refusal; callers raise it, chaining the port error as its cause."""
     return EquityReadQueryRefusedError(reason, message)
+
+
+EQUITY_READ_STORAGE_FAILURE_MESSAGE = "the persisted read storage failed permanently"
+"""The one fixed refusal message for EI7-SI1: no record, path or engine text."""
+
+
+@contextmanager
+def refusing_equity_read_storage_failure() -> Iterator[None]:
+    """Refuse the whole query when a reader reports a permanent read-storage failure.
+
+    ``EquityReadStorageIntegrityError`` becomes PERSISTED_AUTHORITY_INVALID,
+    chained to the reader's error; every other exception passes unchanged.
+    """
+    try:
+        yield
+    except EquityReadStorageIntegrityError as exc:
+        raise refuse_equity_read_query(
+            EquityReadQueryRefusal.PERSISTED_AUTHORITY_INVALID,
+            EQUITY_READ_STORAGE_FAILURE_MESSAGE,
+        ) from exc
