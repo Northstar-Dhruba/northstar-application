@@ -37,7 +37,9 @@ never pinned to W and never atomic with this read.
 
 The ledger-versus-overflow precedence of EI7-P6 happens inside the reader's
 single read and is not observable here; this module only classifies what the
-reader reports.
+reader reports. A permanent read-storage failure (EI7-SI1) refuses both
+projections with PERSISTED_AUTHORITY_INVALID, not retryable: no list, no
+declaration state and no watermark is reported (SI-A).
 
 Nothing here writes, reads a clock or calls out.
 """
@@ -53,6 +55,7 @@ from northstar_core.foundation.value_objects import ExchangeCode, PointInTime
 from northstar_application.application_services.equity_read_query_errors import (
     EquityReadQueryRefusal,
     refuse_equity_read_query,
+    refusing_equity_read_storage_failure,
 )
 from northstar_application.application_services.equity_recommendation_issuance_records import (
     EquityRecordedIssuance,
@@ -306,12 +309,13 @@ def _bounded_read(
     _require_session(exchange_code, trading_date)
     _require_watermark(watermark)
     try:
-        result = reader.recorded_session_issuances(
-            exchange_code,
-            trading_date,
-            limit=EQUITY_RECORDED_SESSION_DISCOVERY_LIMIT,
-            watermark=watermark,
-        )
+        with refusing_equity_read_storage_failure():  # EI7-SI1: never retryable
+            result = reader.recorded_session_issuances(
+                exchange_code,
+                trading_date,
+                limit=EQUITY_RECORDED_SESSION_DISCOVERY_LIMIT,
+                watermark=watermark,
+            )
     except EquityIssuanceWatermarkBeyondAuthorityError as exc:
         raise refuse_equity_read_query(
             _R.WATERMARK_AHEAD, "the watermark is beyond the recording position"

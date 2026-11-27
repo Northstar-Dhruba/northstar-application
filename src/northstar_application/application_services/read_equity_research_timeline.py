@@ -51,6 +51,13 @@ here. The view refuses to state NOT_ELIGIBLE, UNRESOLVED or a generation
 UNKNOWN: each needs a separately governed exact lookup that supplies the
 record.
 
+A permanent read-storage failure (``EquityReadStorageIntegrityError``,
+EI7-SI1) from any reader -- timeline, snapshot, issuance or generation
+record -- refuses the whole response with PERSISTED_AUTHORITY_INVALID, not
+retryable (SI-A). It establishes nothing about any record, so it never
+becomes an UNKNOWN timeline, NOT_QUERYABLE or any of its reasons, a
+re-derived decision, EVIDENCE_CLASS_UNSUPPORTED or DEPENDENCY_UNAVAILABLE.
+
 Nothing here writes, reads a clock or calls out.
 """
 
@@ -79,6 +86,7 @@ from northstar_application.application_services.equity_candle_evidence_snapshot 
 from northstar_application.application_services.equity_read_query_errors import (
     EquityReadQueryRefusal,
     refuse_equity_read_query,
+    refusing_equity_read_storage_failure,
 )
 from northstar_application.application_services.equity_recommendation_generation_decoding import (
     InvalidEquityRecommendationRecordError,
@@ -340,7 +348,8 @@ def _gated(
         if snapshot_id in retrieved:
             continue
         try:
-            snapshot = snapshots.get_snapshot(snapshot_id)
+            with refusing_equity_read_storage_failure():  # EI7-SI1
+                snapshot = snapshots.get_snapshot(snapshot_id)
         except InvalidStoredEquityCandleEvidenceSnapshotError as exc:
             raise refuse_equity_read_query(
                 _INVALID, "a research entry's snapshot is corrupt"
@@ -502,7 +511,8 @@ class GetEquityResearchTimelineUseCase:
         self, strategy: StrategyIdentity, listing: ListingReference, trading_date: date
     ) -> StoredEquityIntradayResearchTimeline | None:
         try:
-            stored = self._timelines.load(strategy, listing, trading_date)
+            with refusing_equity_read_storage_failure():  # EI7-SI1: never UNKNOWN
+                stored = self._timelines.load(strategy, listing, trading_date)
         except InvalidStoredEquityIntradayResearchTimelineError as exc:
             raise refuse_equity_read_query(
                 _INVALID, "the stored research timeline is invalid"
@@ -525,7 +535,8 @@ class GetEquityResearchTimelineUseCase:
         self, strategy: StrategyIdentity, listing: ListingReference, trading_date: date
     ) -> EquityRecordedIssuance | None:
         try:
-            recorded = self._issuances.load_session_issuance(strategy, listing, trading_date)
+            with refusing_equity_read_storage_failure():  # EI7-SI1: never NOT_QUERYABLE
+                recorded = self._issuances.load_session_issuance(strategy, listing, trading_date)
         except InvalidStoredEquityRecommendationIssuanceAuthorityError as exc:
             raise refuse_equity_read_query(_INVALID, "the issuance authority is invalid") from exc
         except EquityRecommendationIssuanceUnavailableError as exc:
@@ -546,7 +557,8 @@ class GetEquityResearchTimelineUseCase:
 
     def _disposition(self, issuance: EquityRecordedIssuance) -> Any:
         try:
-            return self._generations.load_disposition(issuance.recommendation.generation_key)
+            with refusing_equity_read_storage_failure():  # EI7-SI1
+                return self._generations.load_disposition(issuance.recommendation.generation_key)
         except InvalidEquityRecommendationRecordError as exc:
             raise refuse_equity_read_query(
                 _INVALID, "the issuance's generation record is invalid"
